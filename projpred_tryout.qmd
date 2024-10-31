@@ -1,0 +1,1269 @@
+---
+title: "projpred_tryout"
+format: html
+author: Kim (Zhipei)
+---
+
+```{r}
+seed <- 123
+set.seed(seed)
+library(tidyverse)
+library(rstanarm)
+library(bayesplot)
+library(projpred)
+library(posterior)
+```
+
+# scenario 1
+
+## small n
+```{r}
+# read in the data with no correlation
+data_sierra = read.csv("p50/sim_p50_t10.csv")
+```
+
+```{r}
+data_r1 <- data_sierra %>% 
+  filter(data_sierra$N == 100, data_sierra$r == 1) %>%
+  select(-N, -r, -X)
+head(data_r1)
+```
+```{r}
+dim(data_r1)
+```
+
+```{r}
+# Number of regression coefficients:
+( D <- sum(grepl("^X", names(data_r1))) )
+# Prior guess for the number of relevant (i.e., non-zero) regression
+# coefficients:
+p0 <- 5
+# Number of observations:
+N <- nrow(data_r1)
+# Hyperprior scale for tau, the global shrinkage parameter (note that for the
+# Gaussian family, 'rstanarm' will automatically scale this by the residual
+# standard deviation):
+tau0 <- p0 / (D - p0) * 1 / sqrt(N)
+```
+
+### reference model
+```{r}
+start.time <- Sys.time()
+
+set.seed(seed)
+refm_fit <- stan_glm(
+  y ~ .,
+  family = gaussian(),
+  data = data_r1,
+  prior = hs(global_scale = tau0),
+  chains = 4, iter = 2000,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+yrep <- posterior_predict(refm_fit, draws = 50)
+ppc_dens_overlay(data_r1$y, yrep)
+```
+
+
+
+### Preliminary cv_varsel() run
+```{r}
+refm_obj <- get_refmodel(refm_fit)
+```
+
+
+```{r}
+# Preliminary cv_varsel() run:
+start.time <- Sys.time()
+
+cvvs_fast <- cv_varsel(
+  refm_obj,
+  validate_search = FALSE,
+  ### Only for the sake of speed (not recommended in general):
+  method = "L1",
+  refit_prj = FALSE,
+  nterms_max = 20,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+```{r}
+plot(cvvs_fast, stats = "mlpd", ranking_nterms_max = NA)
+```
+
+```{r}
+start.time <- Sys.time()
+
+# Preliminary cv_varsel() run with `refit_prj = TRUE`:
+cvvs_fast_refit <- cv_varsel(
+  cvvs_fast,
+  nclusters_pred = 20,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_fast_refit, stats = "mlpd", ranking_nterms_max = NA)
+```
+### final cv_varsel() run kfold
+```{r}
+# final cv_varsel() run
+start.time <- Sys.time()
+
+# Refit the reference model K times:
+cv_fits_10fold <- run_cvfun(
+  refm_obj,
+  K = 10
+)
+
+cvvs_10fold <- cv_varsel(
+  refm_obj,
+  cv_method = "kfold",
+  cvfits = cv_fits_10fold,
+  method = "L1",
+  nclusters_pred = 20,
+  nterms_max = 13,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_10fold, stats = "mlpd", deltas = TRUE)
+```
+### final cv_varsel() run LOO
+```{r}
+# final cv_varsel() run LOO
+start.time <- Sys.time()
+
+# Refit the reference model using LOO-CV
+
+cvvs_loo <- cv_varsel(
+  refm_obj,
+  cv_method = "LOO",
+  nloo = N,
+  method = "L1",
+  nclusters_pred = 20,
+  nterms_max = 13,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_loo, stats = "mlpd", deltas = TRUE)
+```
+
+```{r}
+suggest_size(cvvs_loo, stat = "mlpd")
+```
+### cv run summary
+```{r}
+smmry <- summary(cvvs_loo, stats = "mlpd", type = c("mean", "lower", "upper"),
+                 deltas = TRUE)
+print(smmry, digits = 1)
+```
+
+### variable selection
+```{r}
+# predictor rankings
+rk <- ranking(cvvs)
+```
+
+
+```{r}
+# ranking proportions
+( pr_rk <- cv_proportions(rk) )
+```
+
+```{r}
+rk[["fulldata"]]
+```
+
+```{r}
+plot(pr_rk)
+```
+
+```{r}
+( predictors_final <- head(rk[["fulldata"]], 6) )
+```
+
+```{r}
+plot(cv_proportions(rk, cumulate = TRUE))
+```
+### projection
+```{r}
+# final submodel once again
+prj <- project(
+  refm_obj,
+  predictor_terms = predictors_final,
+  verbose = FALSE
+)
+```
+
+```{r}
+prj_mat <- as.matrix(prj)
+```
+
+```{r}
+prj_drws <- as_draws_matrix(prj_mat)
+prj_smmry <- summarize_draws(
+  prj_drws,
+  "median", "mad", function(x) quantile(x, probs = c(0.025, 0.975))
+)
+
+prj_smmry <- as.data.frame(prj_smmry)
+print(prj_smmry, digits = 1)
+```
+
+```{r}
+bayesplot_theme_set(ggplot2::theme_bw())
+mcmc_intervals(prj_mat) +
+  ggplot2::coord_cartesian(xlim = c(-1.5, 1.6))
+```
+```{r}
+refm_mat <- as.matrix(refm_fit)
+mcmc_intervals(refm_mat, pars = colnames(prj_mat)) +
+  ggplot2::coord_cartesian(xlim = c(-1.5, 1.6))
+```
+
+### confusion matrix
+```{r}
+calculate_inclusion_metrics <- function(selected_predictors, true_predictors, total_predictors = 50) {
+  # Calculate metrics
+  true_inclusion <- sum(selected_predictors %in% true_predictors)                    # Correctly included
+  false_inclusion <- sum(!(selected_predictors %in% true_predictors))                # Incorrectly included
+  false_exclusion <- sum(true_predictors %in% true_predictors & 
+                         !(true_predictors %in% selected_predictors))                # Incorrectly excluded
+  true_exclusion <- total_predictors - true_inclusion - false_inclusion - false_exclusion  # Correctly excluded
+
+  # Construct the confusion matrix
+  confusion_matrix <- matrix(
+    c(true_inclusion, false_exclusion, false_inclusion, true_exclusion),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list("Actual" = c("Non-zero", "Zero"), "Predicted" = c("Included", "Excluded"))
+  )
+  
+  return(confusion_matrix)
+}
+```
+
+
+```{r}
+true_predictors <- paste0("X", 1:10)
+predictors_final <- head(rk[["fulldata"]], 6)
+
+confusion_matrix <- calculate_inclusion_metrics(predictors_final, true_predictors)
+print(confusion_matrix)
+```
+
+
+# scenario 2
+
+## small n
+```{r}
+# read in the data with correlation 0.4
+data_sierra_s2 = read.csv("p50/sim_p50_t10_corr0.4_first10.csv")
+```
+
+```{r}
+data_s2_r1 <- data_sierra_s2 %>% 
+  filter(data_sierra_s2$N == 100, data_sierra_s2$r == 1) %>%
+  select(-N, -r, -X)
+head(data_s2_r1)
+```
+
+```{r}
+dim(data_s2_r1)
+```
+
+```{r}
+# Number of regression coefficients:
+( D <- sum(grepl("^X", names(data_s2_r1))) )
+# Prior guess for the number of relevant (i.e., non-zero) regression
+# coefficients:
+p0 <- 5
+# Number of observations:
+N <- nrow(data_s2_r1)
+# Hyperprior scale for tau, the global shrinkage parameter (note that for the
+# Gaussian family, 'rstanarm' will automatically scale this by the residual
+# standard deviation):
+tau0 <- p0 / (D - p0) * 1 / sqrt(N)
+```
+
+# reference model
+```{r}
+start.time <- Sys.time()
+
+set.seed(seed)
+refm_fit_s2 <- stan_glm(
+  y ~ .,
+  family = gaussian(),
+  data = data_s2_r1,
+  prior = hs(global_scale = tau0),
+  chains = 4, iter = 2000,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_fit_s2, draws = 50)
+ppc_dens_overlay(data_s2_r1$y, yrep)
+```
+
+
+### Preliminary cv_varsel() run
+```{r}
+refm_obj_s2 <- get_refmodel(refm_fit_s2)
+```
+
+
+```{r}
+# Preliminary cv_varsel() run:
+start.time <- Sys.time()
+
+cvvs_fast_s2 <- cv_varsel(
+  refm_obj_s2,
+  validate_search = FALSE,
+  ### Only for the sake of speed (not recommended in general):
+  method = "L1",
+  refit_prj = FALSE,
+  nterms_max = 20,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_fast_s2, stats = "mlpd", ranking_nterms_max = NA)
+```
+
+```{r}
+start.time <- Sys.time()
+
+# Preliminary cv_varsel() run with `refit_prj = TRUE`:
+cvvs_fast_refit_s2 <- cv_varsel(
+  cvvs_fast_s2,
+  nclusters_pred = 20,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_fast_refit_s2, stats = "mlpd", ranking_nterms_max = NA)
+```
+
+
+### final cv_varsel() run kfold
+```{r}
+# final cv_varsel() run
+start.time <- Sys.time()
+
+# Refit the reference model K times:
+cv_fits_10fold_s2 <- run_cvfun(
+  refm_obj_s2,
+  K = 10
+)
+
+cvvs_10fold_s2 <- cv_varsel(
+  refm_obj_s2,
+  cv_method = "kfold",
+  cvfits = cv_fits_10fold_s2,
+  method = "L1",
+  nclusters_pred = 20,
+  nterms_max = 13,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_10fold_s2, stats = "mlpd", deltas = TRUE)
+```
+
+
+### final cv_varsel() run LOO
+```{r}
+# final cv_varsel() run LOO
+start.time <- Sys.time()
+
+# Refit the reference model using LOO-CV
+
+cvvs_loo_s2 <- cv_varsel(
+  refm_obj_s2,
+  cv_method = "LOO",
+  nloo = N,
+  method = "L1",
+  nclusters_pred = 20,
+  nterms_max = 13,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+plot(cvvs_loo_s2, stats = "mlpd", deltas = TRUE)
+```
+
+
+```{r}
+suggest_size(cvvs_loo_s2, stat = "mlpd")
+```
+
+### cv run summary
+```{r}
+smmry <- summary(cvvs_loo_s2, stats = "mlpd", type = c("mean", "lower", "upper"),
+                 deltas = TRUE)
+print(smmry, digits = 1)
+```
+
+### variable selection
+```{r}
+# predictor rankings
+rk_s2 <- ranking(cvvs_loo_s2)
+```
+
+
+```{r}
+# ranking proportions
+pr_rk_s2 <- cv_proportions(rk_s2)
+```
+
+```{r}
+rk_s2[["fulldata"]]
+```
+
+```{r}
+plot(pr_rk_s2)
+```
+
+```{r}
+predictors_final <- head(rk_s2[["fulldata"]], 8)
+```
+
+```{r}
+plot(cv_proportions(rk_s2, cumulate = TRUE))
+```
+### projection
+```{r}
+# final submodel once again
+prj_s2 <- project(
+  refm_obj_s2,
+  predictor_terms = predictors_final,
+  verbose = FALSE
+)
+```
+
+```{r}
+prj_mat_s2 <- as.matrix(prj_s2)
+```
+
+```{r}
+prj_drws_s2 <- as_draws_matrix(prj_mat_s2)
+prj_smmry_s2 <- summarize_draws(
+  prj_drws_s2,
+  "median", "mad", function(x) quantile(x, probs = c(0.025, 0.975))
+)
+
+prj_smmry_s2 <- as.data.frame(prj_smmry_s2)
+print(prj_smmry_s2, digits = 1)
+```
+
+### confusion matrix
+
+```{r}
+true_predictors <- paste0("X", 1:10)
+predictors_final <- head(rk_s2[["fulldata"]], 8)
+
+confusion_matrix <- calculate_inclusion_metrics(predictors_final, true_predictors)
+print(confusion_matrix)
+```
+
+
+# scenario 3
+
+## small n
+```{r}
+# read in the data with correlation 0.4 and mixed true effects
+data_sierra_s3 = read.csv("p50/sim_p50_t10_corr0.4_mixed.csv")
+```
+
+```{r}
+data_s3_r1 <- data_sierra_s3 %>% 
+  filter(data_sierra_s3$N == 100, data_sierra_s3$r == 1) %>%
+  select(-N, -r, -X)
+head(data_s3_r1)
+```
+
+```{r}
+dim(data_s3_r1)
+```
+
+```{r}
+# Number of regression coefficients:
+( D <- sum(grepl("^X", names(data_s3_r1))) )
+# Prior guess for the number of relevant (i.e., non-zero) regression
+# coefficients:
+p0 <- 5
+# Number of observations:
+N <- nrow(data_s3_r1)
+# Hyperprior scale for tau, the global shrinkage parameter (note that for the
+# Gaussian family, 'rstanarm' will automatically scale this by the residual
+# standard deviation):
+tau0 <- p0 / (D - p0) * 1 / sqrt(N)
+```
+
+# reference model
+```{r}
+start.time <- Sys.time()
+
+set.seed(seed)
+refm_fit_s3 <- stan_glm(
+  y ~ .,
+  family = gaussian(),
+  data = data_s3_r1,
+  prior = hs(global_scale = tau0),
+  chains = 4, iter = 2000,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_fit_s3, draws = 50)
+ppc_dens_overlay(data_s3_r1$y, yrep)
+```
+
+### Preliminary cv_varsel() run
+```{r}
+refm_obj_s3 <- get_refmodel(refm_fit_s3)
+```
+
+
+```{r}
+# Preliminary cv_varsel() run:
+start.time <- Sys.time()
+
+cvvs_fast_s3 <- cv_varsel(
+  refm_obj_s3,
+  validate_search = FALSE,
+  ### Only for the sake of speed (not recommended in general):
+  method = "L1",
+  refit_prj = FALSE,
+  nterms_max = 20,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_fast_s3, stats = "mlpd", ranking_nterms_max = NA)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+# Preliminary cv_varsel() run with `refit_prj = TRUE`:
+cvvs_fast_refit_s3 <- cv_varsel(
+  cvvs_fast_s3,
+  nclusters_pred = 20,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_fast_refit_s3, stats = "mlpd", ranking_nterms_max = NA)
+```
+
+### final cv_varsel() run kfold
+```{r}
+# final cv_varsel() run
+start.time <- Sys.time()
+
+# Refit the reference model K times:
+cv_fits_10fold_s3 <- run_cvfun(
+  refm_obj_s3,
+  K = 10
+)
+
+cvvs_10fold_s3 <- cv_varsel(
+  refm_obj_s3,
+  cv_method = "kfold",
+  cvfits = cv_fits_10fold_s3,
+  method = "L1",
+  nclusters_pred = 20,
+  nterms_max = 13,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_10fold_s3, stats = "mlpd", deltas = TRUE)
+```
+
+
+### final cv_varsel() run LOO
+```{r}
+# final cv_varsel() run LOO
+start.time <- Sys.time()
+
+# Refit the reference model using LOO-CV
+
+cvvs_loo_s3 <- cv_varsel(
+  refm_obj_s3,
+  cv_method = "LOO",
+  nloo = N,
+  method = "L1",
+  nclusters_pred = 20,
+  nterms_max = 13,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+plot(cvvs_loo_s3, stats = "mlpd", deltas = TRUE)
+```
+
+```{r}
+# final cv_varsel() run LOO
+start.time <- Sys.time()
+
+# Refit the reference model using LOO-CV
+
+cvvs_loo_s3_nterms_max_15 <- cv_varsel(
+  refm_obj_s3,
+  cv_method = "LOO",
+  nloo = N,
+  method = "L1",
+  nclusters_pred = 20,
+  nterms_max = 15,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+plot(cvvs_loo_s3_nterms_max_15, stats = "mlpd", deltas = TRUE)
+```
+
+
+```{r}
+suggest_size(cvvs_loo_s3_nterms_max_15, stat = "mlpd")
+```
+
+### cv run summary
+```{r}
+# smmry <- summary(cvvs_loo_s3, stats = "mlpd", type = c("mean", "lower", "upper"),
+#                  deltas = TRUE)
+# print(smmry, digits = 1)
+```
+
+### variable selection
+```{r}
+# predictor rankings
+rk_s3 <- ranking(cvvs_loo_s3_nterms_max_15)
+```
+
+
+```{r}
+# ranking proportions
+pr_rk_s3 <- cv_proportions(rk_s3)
+```
+
+```{r}
+rk_s3[["fulldata"]]
+```
+
+```{r}
+plot(pr_rk_s3)
+```
+
+```{r}
+plot(cv_proportions(rk_s3, cumulate = TRUE))
+```
+
+
+```{r}
+predictors_final <- head(rk_s3[["fulldata"]], 13)
+```
+
+### projection
+```{r}
+# final submodel once again
+prj_s3 <- project(
+  refm_obj_s3,
+  predictor_terms = predictors_final,
+  verbose = FALSE
+)
+```
+
+```{r}
+prj_mat_s3 <- as.matrix(prj_s3)
+```
+
+```{r}
+prj_drws_s3 <- as_draws_matrix(prj_mat_s3)
+prj_smmry_s3 <- summarize_draws(
+  prj_drws_s3,
+  "median", "mad", function(x) quantile(x, probs = c(0.025, 0.975))
+)
+
+prj_smmry_s3 <- as.data.frame(prj_smmry_s3)
+print(prj_smmry_s3, digits = 1)
+```
+
+### confusion matrix
+
+```{r}
+true_predictors <- paste0("X", seq(1, 50, 5))
+predictors_final <- head(rk_s3[["fulldata"]], 6)
+
+confusion_matrix <- calculate_inclusion_metrics(predictors_final, true_predictors)
+print(confusion_matrix)
+```
+
+
+# scenario 4
+
+## small n
+```{r}
+# read in the data with correlation 0.8
+data_sierra_s4 = read.csv("p50/sim_p50_t10_corr0.8_first10.csv")
+```
+
+```{r}
+data_s4_r1 <- data_sierra_s4 %>% 
+  filter(data_sierra_s4$N == 100, data_sierra_s4$r == 1) %>%
+  select(-N, -r, -X)
+head(data_s4_r1)
+```
+
+```{r}
+dim(data_s4_r1)
+```
+
+```{r}
+# Number of regression coefficients:
+D <- sum(grepl("^X", names(data_s4_r1))) 
+# Prior guess for the number of relevant (i.e., non-zero) regression
+# coefficients:
+p0 <- 5
+# Number of observations:
+N <- nrow(data_s4_r1)
+# Hyperprior scale for tau, the global shrinkage parameter (note that for the
+# Gaussian family, 'rstanarm' will automatically scale this by the residual
+# standard deviation):
+tau0 <- p0 / (D - p0) * 1 / sqrt(N)
+```
+
+# reference model
+```{r}
+start.time <- Sys.time()
+
+set.seed(seed)
+refm_fit_s4 <- stan_glm(
+  y ~ .,
+  family = gaussian(),
+  data = data_s4_r1,
+  prior = hs(global_scale = tau0),
+  chains = 4, iter = 2000,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_fit_s4, draws = 50)
+ppc_dens_overlay(data_s4_r1$y, yrep)
+```
+
+### Preliminary cv_varsel() run
+```{r}
+refm_obj_s4 <- get_refmodel(refm_fit_s4)
+```
+
+
+```{r}
+# Preliminary cv_varsel() run:
+start.time <- Sys.time()
+
+cvvs_fast_s4 <- cv_varsel(
+  refm_obj_s4,
+  validate_search = FALSE,
+  ### Only for the sake of speed (not recommended in general):
+  method = "L1",
+  refit_prj = FALSE,
+  nterms_max = 20,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_fast_s4, stats = "mlpd", ranking_nterms_max = NA)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+# Preliminary cv_varsel() run with `refit_prj = TRUE`:
+cvvs_fast_refit_s4 <- cv_varsel(
+  cvvs_fast_s4,
+  nclusters_pred = 20,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_fast_refit_s4, stats = "mlpd", ranking_nterms_max = NA)
+```
+
+### final cv_varsel() run kfold
+```{r}
+# final cv_varsel() run
+start.time <- Sys.time()
+
+# Refit the reference model K times:
+cv_fits_10fold_s4 <- run_cvfun(
+  refm_obj_s4,
+  K = 10
+)
+
+cvvs_10fold_s4 <- cv_varsel(
+  refm_obj_s4,
+  cv_method = "kfold",
+  cvfits = cv_fits_10fold_s4,
+  method = "L1",
+  nclusters_pred = 20,
+  nterms_max = 8,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_10fold_s4, stats = "mlpd", deltas = TRUE)
+```
+
+
+### final cv_varsel() run LOO
+```{r}
+# final cv_varsel() run LOO
+start.time <- Sys.time()
+
+# Refit the reference model using LOO-CV
+
+cvvs_loo_s4 <- cv_varsel(
+  refm_obj_s4,
+  cv_method = "LOO",
+  nloo = N,
+  method = "L1",
+  nclusters_pred = 20,
+  nterms_max = 13,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+plot(cvvs_loo_s4, stats = "mlpd", deltas = TRUE)
+```
+
+
+```{r}
+suggest_size(cvvs_loo_s4, stat = "mlpd")
+```
+
+### cv run summary
+```{r}
+# smmry <- summary(cvvs_loo_s4, stats = "mlpd", type = c("mean", "lower", "upper"),
+#                  deltas = TRUE)
+# print(smmry, digits = 1)
+```
+
+### variable selection
+```{r}
+# predictor rankings
+rk_s4 <- ranking(cvvs_loo_s4)
+```
+
+
+```{r}
+# ranking proportions
+pr_rk_s4 <- cv_proportions(rk_s4)
+```
+
+```{r}
+rk_s4[["fulldata"]]
+```
+
+```{r}
+plot(pr_rk_s4)
+```
+
+```{r}
+plot(cv_proportions(rk_s4, cumulate = TRUE))
+```
+```{r}
+predictors_final <- head(rk_s4[["fulldata"]], 10)
+```
+
+### projection
+```{r}
+# final submodel once again
+prj_s4 <- project(
+  refm_obj_s2,
+  predictor_terms = predictors_final,
+  verbose = FALSE
+)
+```
+
+```{r}
+prj_mat_s4 <- as.matrix(prj_s4)
+```
+
+```{r}
+prj_drws_s4 <- as_draws_matrix(prj_mat_s4)
+prj_smmry_s4 <- summarize_draws(
+  prj_drws_s4,
+  "median", "mad", function(x) quantile(x, probs = c(0.025, 0.975))
+)
+
+prj_smmry_s4 <- as.data.frame(prj_smmry_s4)
+print(prj_smmry_s4, digits = 1)
+```
+
+### confusion matrix
+
+```{r}
+true_predictors <- paste0("X", 1:10)
+predictors_final <- head(rk_s4[["fulldata"]], 6)
+
+confusion_matrix <- calculate_inclusion_metrics(predictors_final, true_predictors)
+print(confusion_matrix)
+```
+
+# scenario 5
+
+## small n
+```{r}
+# read in the data with correlation 0.8 and mixed true effects
+data_sierra_s5 = read.csv("p50/sim_p50_t10_corr0.8_mixed.csv")
+```
+
+```{r}
+data_s5_r1 <- data_sierra_s5 %>% 
+  filter(data_sierra_s5$N == 100, data_sierra_s5$r == 1) %>%
+  select(-N, -r, -X)
+head(data_s5_r1)
+```
+
+```{r}
+dim(data_s5_r1)
+```
+
+```{r}
+# Number of regression coefficients:
+( D <- sum(grepl("^X", names(data_s5_r1))) )
+# Prior guess for the number of relevant (i.e., non-zero) regression
+# coefficients:
+p0 <- 5
+# Number of observations:
+N <- nrow(data_s5_r1)
+# Hyperprior scale for tau, the global shrinkage parameter (note that for the
+# Gaussian family, 'rstanarm' will automatically scale this by the residual
+# standard deviation):
+tau0 <- p0 / (D - p0) * 1 / sqrt(N)
+```
+
+# reference model
+```{r}
+start.time <- Sys.time()
+
+set.seed(seed)
+refm_fit_s5 <- stan_glm(
+  y ~ .,
+  family = gaussian(),
+  data = data_s5_r1,
+  prior = hs(global_scale = tau0),
+  chains = 4, iter = 2000,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_fit_s5, draws = 50)
+ppc_dens_overlay(data_s5_r1$y, yrep)
+```
+
+### Preliminary cv_varsel() run
+```{r}
+refm_obj_s5 <- get_refmodel(refm_fit_s5)
+```
+
+
+```{r}
+# Preliminary cv_varsel() run:
+start.time <- Sys.time()
+
+cvvs_fast_s5 <- cv_varsel(
+  refm_obj_s5,
+  validate_search = FALSE,
+  ### Only for the sake of speed (not recommended in general):
+  method = "L1",
+  refit_prj = FALSE,
+  nterms_max = 20,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_fast_s5, stats = "mlpd", ranking_nterms_max = NA)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+# Preliminary cv_varsel() run with `refit_prj = TRUE`:
+cvvs_fast_refit_s5 <- cv_varsel(
+  cvvs_fast_s5,
+  nclusters_pred = 20,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_fast_refit_s5, stats = "mlpd", ranking_nterms_max = NA)
+```
+
+### final cv_varsel() run kfold
+```{r}
+# final cv_varsel() run
+# start.time <- Sys.time()
+# 
+# # Refit the reference model K times:
+# cv_fits_10fold_s5 <- run_cvfun(
+#   refm_obj_s5,
+#   K = 10
+# )
+# 
+# cvvs_10fold_s5 <- cv_varsel(
+#   refm_obj_s5,
+#   cv_method = "kfold",
+#   cvfits = cv_fits_10fold_s5,
+#   method = "L1",
+#   nclusters_pred = 20,
+#   nterms_max = 13,
+#   verbose = FALSE
+# )
+# 
+# end.time <- Sys.time()
+# time.taken <- round(end.time - start.time,2)
+# time.taken
+```
+
+```{r}
+# plot(cvvs_10fold_s5, stats = "mlpd", deltas = TRUE)
+```
+
+
+### final cv_varsel() run LOO
+```{r}
+# final cv_varsel() run LOO
+start.time <- Sys.time()
+
+# Refit the reference model using LOO-CV
+
+cvvs_loo_s5 <- cv_varsel(
+  refm_obj_s5,
+  cv_method = "LOO",
+  nloo = N,
+  method = "L1",
+  nclusters_pred = 20,
+  nterms_max = 20,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+plot(cvvs_loo_s5, stats = "mlpd", deltas = TRUE)
+```
+
+
+```{r}
+suggest_size(cvvs_loo_s5, stat = "mlpd")
+```
+
+### cv run summary
+```{r}
+smmry <- summary(cvvs_loo_s5, stats = "mlpd", type = c("mean", "lower", "upper"),
+                 deltas = TRUE)
+print(smmry, digits = 1)
+```
+
+### variable selection
+```{r}
+# predictor rankings
+rk_s5 <- ranking(cvvs_loo_s5)
+```
+
+
+```{r}
+# ranking proportions
+pr_rk_s5 <- cv_proportions(rk_s5)
+```
+
+```{r}
+rk_s5[["fulldata"]]
+```
+
+```{r}
+plot(pr_rk_s5)
+```
+
+```{r}
+plot(cv_proportions(rk_s5, cumulate = TRUE))
+```
+```{r}
+predictors_final <- head(rk_s5[["fulldata"]], 18)
+```
+
+### projection
+```{r}
+# final submodel once again
+prj_s5 <- project(
+  refm_obj_s5,
+  predictor_terms = predictors_final,
+  verbose = FALSE
+)
+```
+
+```{r}
+prj_mat_s5 <- as.matrix(prj_s5)
+```
+
+```{r}
+prj_drws_s5 <- as_draws_matrix(prj_mat_s5)
+prj_smmry_s5 <- summarize_draws(
+  prj_drws_s5,
+  "median", "mad", function(x) quantile(x, probs = c(0.025, 0.975))
+)
+
+prj_smmry_s5 <- as.data.frame(prj_smmry_s5)
+print(prj_smmry_s5, digits = 1)
+```
+
+### confusion matrix
+
+```{r}
+true_predictors <- paste0("X", seq(1, 50, 5))
+predictors_final <- head(rk_s5[["fulldata"]], 18)
+
+confusion_matrix <- calculate_inclusion_metrics(predictors_final, true_predictors)
+print(confusion_matrix)
+```
+
+
+
