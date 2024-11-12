@@ -8,10 +8,11 @@ author: Kim (Zhipei)
 seed <- 123
 set.seed(seed)
 library(tidyverse)
-library(rstanarm)
+library(brms)
 library(bayesplot)
 library(projpred)
 library(posterior)
+library(data.table)
 ```
 
 # scenario 1
@@ -19,46 +20,106 @@ library(posterior)
 ## small n
 ```{r}
 # read in the data with no correlation
-data_sierra = read.csv("p50/sim_p50_t10.csv")
+# data_sierra_s1 = read.csv("p50/sim_p50_t10.csv")
+# the dataset is huge so it reads too slow
+```
+
+
+
+```{r}
+# read only the datasets going to be used for the sake of speed
+# data_subset <- fread("p50/sim_p50_t10.csv")[N == 100 & r == 1]
+# data_subset <- as.data.frame(data_subset)
+# data_subset <- data_subset %>% select(-V1, -N, -r)
 ```
 
 ```{r}
-data_r1 <- data_sierra %>% 
-  filter(data_sierra$N == 100, data_sierra$r == 1) %>%
-  select(-N, -r, -X)
-head(data_r1)
+# Define the function to load and preprocess the data
+load_filter_standardize_data <- function(file_path, sample_size, replication) {
+  
+  # Read the data using fread and filter based on N and r
+  data_subset <- fread(file_path)[N == sample_size & r == replication]
+  
+  # Convert to a data.frame
+  data_subset <- as.data.frame(data_subset)
+  
+  # Select all columns except V1, N, and r
+  data_subset <- data_subset %>% select(-V1, -N, -r)
+  
+  # Standardize the data except for the dependent variable y which is the first column
+  standardized_data <- data_subset
+  standardized_data[ , -1] <- scale(standardized_data[ , -1])
+  
+  return(standardized_data)
+}
 ```
+
+
+
+### small n replication 1
 ```{r}
-dim(data_r1)
+# read in the data and take a look
+data_s1_small_r1 <- load_filter_standardize_data("p50/sim_p50_t10.csv", sample_size = 100, replication = 1)
+
+head(data_s1_small_r1)
 ```
+
+
+
+```{r}
+# data_s1_r1 <- data_sierra_s1 %>% 
+#   filter(data_sierra_s1$N == 100, data_sierra_s1$r == 1) %>% # N is sample size, r is replication
+#   select(-N, -r, -X) # X is index
+# head(data_s1_r1)
+```
+
+```{r}
+# # standardize the data
+# data_s1_r1_scaled <- data_subset
+# data_s1_r1_scaled[ , -1] <- scale(data_s1_r1_scaled[ , -1])
+```
+
 
 ```{r}
 # Number of regression coefficients:
-( D <- sum(grepl("^X", names(data_r1))) )
-# Prior guess for the number of relevant (i.e., non-zero) regression
-# coefficients:
-p0 <- 5
-# Number of observations:
-N <- nrow(data_r1)
-# Hyperprior scale for tau, the global shrinkage parameter (note that for the
-# Gaussian family, 'rstanarm' will automatically scale this by the residual
-# standard deviation):
-tau0 <- p0 / (D - p0) * 1 / sqrt(N)
+D <- sum(grepl("^X", names(data_s1_small_r1)))
+
+# number of true predictors
+p0 <- 10
+
+# number of observations
+N <- nrow(data_s1_small_r1)
+
+# Calculate par_ratio
+par_ratio <- p0 / D
+par_ratio
 ```
 
-### reference model
+#### reference model
 ```{r}
+#| chache: 
 start.time <- Sys.time()
 
-set.seed(seed)
-refm_fit <- stan_glm(
-  y ~ .,
-  family = gaussian(),
-  data = data_r1,
-  prior = hs(global_scale = tau0),
-  chains = 4, iter = 2000,
-  refresh = 0
-)
+# set.seed(seed)
+# refm_fit <- stan_glm(
+#   y ~ .,
+#   family = gaussian(),
+#   data = data_r1,
+#   prior = hs(global_scale = tau0),
+#   chains = 4, iter = 2000,
+#   refresh = 0
+# )
+
+refm_fit_s1_small_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s1_small_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  backend = "cmdstanr"
+ )
 
 end.time <- Sys.time()
 time.taken <- round(end.time - start.time,2)
@@ -66,15 +127,15 @@ time.taken
 ```
 
 ```{r}
-yrep <- posterior_predict(refm_fit, draws = 50)
-ppc_dens_overlay(data_r1$y, yrep)
+yrep <- posterior_predict(refm_fit_s1_small_r1, draws = 50)
+ppc_dens_overlay(data_s1_small_r1$y, yrep)
 ```
 
 
 
-### Preliminary cv_varsel() run
+#### Preliminary cv_varsel() run
 ```{r}
-refm_obj <- get_refmodel(refm_fit)
+refm_obj_s1_small_r1 <- get_refmodel(refm_fit_s1_small_r1)
 ```
 
 
@@ -82,13 +143,13 @@ refm_obj <- get_refmodel(refm_fit)
 # Preliminary cv_varsel() run:
 start.time <- Sys.time()
 
-cvvs_fast <- cv_varsel(
-  refm_obj,
+cvvs_fast_s1_small_r1 <- cv_varsel(
+  refm_obj_s1_small_r1,
   validate_search = FALSE,
   ### Only for the sake of speed (not recommended in general):
   method = "L1",
   refit_prj = FALSE,
-  nterms_max = 20,
+  nterms_max = 15,
   verbose = FALSE
 )
 
@@ -96,16 +157,17 @@ end.time <- Sys.time()
 time.taken <- round(end.time - start.time,2)
 time.taken
 ```
+
 ```{r}
-plot(cvvs_fast, stats = "mlpd", ranking_nterms_max = NA)
+plot(cvvs_fast_s1_small_r1, stats = "mlpd", ranking_nterms_max = NA)
 ```
 
 ```{r}
 start.time <- Sys.time()
 
 # Preliminary cv_varsel() run with `refit_prj = TRUE`:
-cvvs_fast_refit <- cv_varsel(
-  cvvs_fast,
+cvvs_fast_refit_s1_small_r1 <- cv_varsel(
+  cvvs_fast_s1_small_r1,
   nclusters_pred = 20,
   verbose = FALSE
 )
@@ -116,26 +178,45 @@ time.taken
 ```
 
 ```{r}
-plot(cvvs_fast_refit, stats = "mlpd", ranking_nterms_max = NA)
+plot(cvvs_fast_refit_s1_small_r1, stats = "mlpd", ranking_nterms_max = NA)
 ```
-### final cv_varsel() run kfold
+
+
+https://mc-stan.org/projpred/reference/cv_varsel.html
+
+ndraws
+Number of posterior draws used in the search part. Ignored if nclusters is not NULL or in case of L1 search (because L1 search always uses a single cluster). If both (nclusters and ndraws) are NULL, the number of posterior draws from the reference model is used for ndraws. See also section "Details" below.
+
+nclusters
+Number of clusters of posterior draws used in the search part. Ignored in case of L1 search (because L1 search always uses a single cluster). For the meaning of NULL, see argument ndraws. See also section "Details" below.
+
+ndraws_pred
+Only relevant if refit_prj is TRUE. Number of posterior draws used in the evaluation part. Ignored if nclusters_pred is not NULL. If both (nclusters_pred and ndraws_pred) are NULL, the number of posterior draws from the reference model is used for ndraws_pred. See also section "Details" below.
+
+nclusters_pred
+Only relevant if refit_prj is TRUE. Number of clusters of posterior draws used in the evaluation part. For the meaning of NULL, see argument ndraws_pred. See also section "Details" below.
+
+#### final cv_varsel() run kfold
 ```{r}
 # final cv_varsel() run
 start.time <- Sys.time()
 
-# Refit the reference model K times:
-cv_fits_10fold <- run_cvfun(
-  refm_obj,
-  K = 10
-)
+# # Refit the reference model K times:
+# cv_fits_10fold <- run_cvfun(
+#   refm_obj,
+#   K = 10
+# )
 
-cvvs_10fold <- cv_varsel(
-  refm_obj,
+cvvs_2fold_s1_small_r1 <- cv_varsel(
+  refm_obj_s1_small_r1,
   cv_method = "kfold",
-  cvfits = cv_fits_10fold,
-  method = "L1",
-  nclusters_pred = 20,
-  nterms_max = 13,
+  K = 2,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
 )
 
@@ -144,23 +225,32 @@ time.taken <- round(end.time - start.time,2)
 time.taken
 ```
 
+
 ```{r}
-plot(cvvs_10fold, stats = "mlpd", deltas = TRUE)
+plot(cvvs_2fold_s1_small_r1, stats = "mlpd", deltas = TRUE)
 ```
-### final cv_varsel() run LOO
+
+https://mc-stan.org/projpred/articles/projpred.html#predictor-rankings-and-identification-of-the-selected-submodel
+"For a given predictor x and a given submodel size j, the ranking proportion is the proportion of CV folds which have predictor x at position j of their predictor ranking."
+
+0% ranking proportion: X6 is not the third predictor added to the model, but say for example first or second, that's why it is here with "0%".
+
+
+
 ```{r}
-# final cv_varsel() run LOO
 start.time <- Sys.time()
 
-# Refit the reference model using LOO-CV
-
-cvvs_loo <- cv_varsel(
-  refm_obj,
-  cv_method = "LOO",
-  nloo = N,
-  method = "L1",
-  nclusters_pred = 20,
-  nterms_max = 13,
+# 5-fold cv
+cvvs_5fold_s1_small_r1 <- cv_varsel(
+  refm_obj_s1_small_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
 )
 
@@ -169,92 +259,290 @@ time.taken <- round(end.time - start.time,2)
 time.taken
 ```
 
-```{r}
-plot(cvvs_loo, stats = "mlpd", deltas = TRUE)
-```
+
 
 ```{r}
-suggest_size(cvvs_loo, stat = "mlpd")
-```
-### cv run summary
-```{r}
-smmry <- summary(cvvs_loo, stats = "mlpd", type = c("mean", "lower", "upper"),
-                 deltas = TRUE)
-print(smmry, digits = 1)
-```
-
-### variable selection
-```{r}
-# predictor rankings
-rk <- ranking(cvvs)
+plot(cvvs_5fold_s1_small_r1, stats = "mlpd", deltas = TRUE)
 ```
 
 
 ```{r}
-# ranking proportions
-( pr_rk <- cv_proportions(rk) )
-```
+start.time <- Sys.time()
 
-```{r}
-rk[["fulldata"]]
-```
-
-```{r}
-plot(pr_rk)
-```
-
-```{r}
-( predictors_final <- head(rk[["fulldata"]], 6) )
-```
-
-```{r}
-plot(cv_proportions(rk, cumulate = TRUE))
-```
-### projection
-```{r}
-# final submodel once again
-prj <- project(
-  refm_obj,
-  predictor_terms = predictors_final,
+# 10-fold cv
+cvvs_10fold_s1_small_r1 <- cv_varsel(
+  refm_obj_s1_small_r1,
+  cv_method = "kfold",
+  K = 10,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
 )
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+
+```{r}
+plot(cvvs_10fold_s1_small_r1, stats = "mlpd", deltas = TRUE)
 ```
 
 ```{r}
-prj_mat <- as.matrix(prj)
-```
+start.time <- Sys.time()
 
-```{r}
-prj_drws <- as_draws_matrix(prj_mat)
-prj_smmry <- summarize_draws(
-  prj_drws,
-  "median", "mad", function(x) quantile(x, probs = c(0.025, 0.975))
+# 10-fold cv
+cvvs_10fold_s1_small_r1_1fulldrawspred <- cv_varsel(
+  refm_obj_s1_small_r1,
+  cv_method = "kfold",
+  K = 10,
+  method = "forward",
+  nclusters = 20,
+  # ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
 )
 
-prj_smmry <- as.data.frame(prj_smmry)
-print(prj_smmry, digits = 1)
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+
+```{r}
+plot(cvvs_10fold_s1_small_r1_1fulldrawspred, stats = "mlpd", deltas = TRUE)
 ```
 
 ```{r}
-bayesplot_theme_set(ggplot2::theme_bw())
-mcmc_intervals(prj_mat) +
-  ggplot2::coord_cartesian(xlim = c(-1.5, 1.6))
-```
-```{r}
-refm_mat <- as.matrix(refm_fit)
-mcmc_intervals(refm_mat, pars = colnames(prj_mat)) +
-  ggplot2::coord_cartesian(xlim = c(-1.5, 1.6))
+start.time <- Sys.time()
+
+# 10-fold cv with draw by draw projection
+cvvs_10fold_s1_small_r1_dbd <- cv_varsel(
+  refm_obj_s1_small_r1,
+  cv_method = "kfold",
+  K = 10,
+  method = "forward",
+  # nclusters = 20,
+  # ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
 ```
 
-### confusion matrix
+
+
+```{r}
+plot(cvvs_10fold_s1_small_r1_dbd, stats = "mlpd", deltas = TRUE)
+```
+
+Using draw by draw doesn't help. Increasing number of folds also does not help in the sense that they are including right variables. By increasing #folds, more "confidence" (ranking proportions) has been shown in the variables chosen (whether they are correct or not).
+
+
+#### final cv_varsel() run LOO
+We don't want to use LOO because it will take forever, and if we use approximation, that's not what we want.
+```{r}
+# final cv_varsel() run LOO
+# start.time <- Sys.time()
+# 
+# # Refit the reference model using LOO-CV
+# 
+# cvvs_loo_s1_small_r1 <- cv_varsel(
+#   refm_obj_s1_small_r1,
+#   cv_method = "LOO",
+#   # nloo = 1000,
+#   method = "L1",
+#   # nclusters = 20,
+#   # ndraws_pred = 400,
+#   nclusters_pred = 20,
+#   nterms_max = 11,
+#   verbose = FALSE
+# )
+# 
+# end.time <- Sys.time()
+# time.taken <- round(end.time - start.time,2)
+# time.taken
+```
+
+```{r}
+plot(cvvs_loo_s1_small_r1, stats = "mlpd", deltas = TRUE)
+```
+
+Takes forever when changing L1 to forward
+```{r}
+# final cv_varsel() run LOO
+# start.time <- Sys.time()
+# 
+# # Refit the reference model using LOO-CV
+# 
+# cvvs_loo_s1_small_r1 <- cv_varsel(
+#   refm_obj_s1_small_r1,
+#   cv_method = "LOO",
+#   # nloo = 1000,
+#   method = "forward",
+#   # nclusters = 20,
+#   # ndraws_pred = 400,
+#   nclusters_pred = 20,
+#   nterms_max = 11,
+#   verbose = FALSE
+# )
+# 
+# end.time <- Sys.time()
+# time.taken <- round(end.time - start.time,2)
+# time.taken
+```
+
+
+```{r}
+print(paste("The suggested model size based on MLPD using 2-fold-CV is", suggest_size(cvvs_2fold_s1_small_r1, stat = "mlpd")))
+print(paste("The suggested model size based on MLPD using 5-fold-CV is", suggest_size(cvvs_5fold_s1_small_r1, stat = "mlpd")))
+print(paste("The suggested model size based on MLPD using 10-fold-CV is", suggest_size(cvvs_10fold_s1_small_r1, stat = "mlpd")))
+# print(paste("The suggested model size based on MLPD using LOO-CV is", suggest_size(cvvs_loo_s1_r1, stat = "mlpd")))
+```
+
+
+#### cv run summary
+```{r}
+# smmry <- summary(cvvs_loo, stats = "mlpd", type = c("mean", "lower", "upper"),
+#                  deltas = TRUE)
+# print(smmry, digits = 1)
+```
+
+#### variable selection
+```{r}
+# # predictor rankings
+# rk <- ranking(cvvs_loo)
+```
+
+
+```{r}
+# # ranking proportions
+# ( pr_rk <- cv_proportions(rk) )
+```
+
+```{r}
+# rk[["fulldata"]]
+```
+
+```{r}
+# plot(pr_rk)
+```
+
+```{r}
+# rk_s1_r1_2fold <- ranking(cvvs_2fold_s1_r1)
+# rk_s1_r1_5fold <- ranking(cvvs_5fold_s1_r1)
+# rk_s1_r1_10fold <- ranking(cvvs_10fold_s1_r1)
+# rk_s1_r1_loo <- ranking(cvvs_loo_s1_r1)
+# 
+# suggested_size_s1_r1_2fold <- suggest_size(cvvs_2fold_s1_r1, stat = "mlpd")
+# suggested_size_s1_r1_5fold <- suggest_size(cvvs_5fold_s1_r1, stat = "mlpd")
+# suggested_size_s1_r1_10fold <- suggest_size(cvvs_10fold_s1_r1, stat = "mlpd")
+# suggested_size_s1_r1_loo <- suggest_size(cvvs_loo_s1_r1, stat = "mlpd")
+# 
+# predictors_final_s1_r1_2fold <- head(rk_s1_r1_2fold[["fulldata"]], suggested_size_s1_r1_2fold)
+# predictors_final_s1_r1_5fold <- head(rk_s1_r1_5fold[["fulldata"]], suggested_size_s1_r1_5fold)
+# predictors_final_s1_r1_10fold <- head(rk_s1_r1_10fold[["fulldata"]], suggested_size_s1_r1_10fold)
+# predictors_final_s1_r1_loo <- head(rk_s1_r1_loo[["fulldata"]], suggested_size_s1_r1_loo)
+```
+
+```{r}
+# plot(cv_proportions(rk, cumulate = TRUE))
+```
+
+#### projection
+```{r}
+# final submodel once again
+# prj_2fold <- project(refm_obj, predictor_terms = predictors_final_s1_r1_2fold, verbose = FALSE)
+# prj_5fold <- project(refm_obj, predictor_terms = predictors_final_s1_r1_5fold, verbose = FALSE)
+# prj_10fold <- project(refm_obj, predictor_terms = predictors_final_s1_r1_10fold, verbose = FALSE)
+# prj_loo <- project(refm_obj, predictor_terms = predictors_final_s1_r1_loo, verbose = FALSE)
+```
+
+```{r}
+# prj_mat <- as.matrix(prj)
+```
+
+```{r}
+# prj_drws <- as_draws_matrix(prj_mat)
+# prj_smmry <- summarize_draws(
+#   prj_drws,
+#   "median", "mad", function(x) quantile(x, probs = c(0.025, 0.975))
+# )
+# 
+# prj_smmry <- as.data.frame(prj_smmry)
+# print(prj_smmry, digits = 1)
+```
+
+```{r}
+# bayesplot_theme_set(ggplot2::theme_bw())
+# mcmc_intervals(prj_mat) +
+#   ggplot2::coord_cartesian(xlim = c(-1.5, 1.6))
+```
+
+```{r}
+# refm_mat <- as.matrix(refm_fit)
+# mcmc_intervals(refm_mat, pars = colnames(prj_mat)) +
+#   ggplot2::coord_cartesian(xlim = c(-1.5, 1.6))
+```
+
+#### confusion matrix
+```{r}
+# calculate_inclusion_metrics <- function(selected_predictors, true_predictors, total_predictors = 50) {
+#   # Calculate metrics
+#   true_inclusion <- sum(selected_predictors %in% true_predictors)                    # Correctly included
+#   false_inclusion <- sum(!(selected_predictors %in% true_predictors))                # Incorrectly included
+#   false_exclusion <- sum(true_predictors %in% true_predictors & 
+#                          !(true_predictors %in% selected_predictors))                # Incorrectly excluded
+#   true_exclusion <- total_predictors - true_inclusion - false_inclusion - false_exclusion  # Correctly excluded
+# 
+#   # Construct the confusion matrix
+#   confusion_matrix <- matrix(
+#     c(true_inclusion, false_exclusion, false_inclusion, true_exclusion),
+#     nrow = 2,
+#     byrow = TRUE,
+#     dimnames = list("Actual" = c("Non-zero", "Zero"), "Predicted" = c("Included", "Excluded"))
+#   )
+#   
+#   return(confusion_matrix)
+# }
+```
+
+
+```{r}
+# true_predictors <- paste0("X", 1:10)
+# 
+# confusion_matrix <- calculate_inclusion_metrics(predictors_final, true_predictors)
+# print(confusion_matrix)
+```
+
 ```{r}
 calculate_inclusion_metrics <- function(selected_predictors, true_predictors, total_predictors = 50) {
-  # Calculate metrics
+  # Calculate the number of predictors
   true_inclusion <- sum(selected_predictors %in% true_predictors)                    # Correctly included
   false_inclusion <- sum(!(selected_predictors %in% true_predictors))                # Incorrectly included
   false_exclusion <- sum(true_predictors %in% true_predictors & 
                          !(true_predictors %in% selected_predictors))                # Incorrectly excluded
   true_exclusion <- total_predictors - true_inclusion - false_inclusion - false_exclusion  # Correctly excluded
+
+  # Calculate rates
+  true_inclusion_rate <- true_inclusion / length(true_predictors)                    # Proportion of true predictors correctly included
+  false_inclusion_rate <- false_inclusion / (total_predictors - length(true_predictors))  # Proportion of irrelevant predictors incorrectly included
+  true_exclusion_rate <- true_exclusion / (total_predictors - length(true_predictors))    # Proportion of irrelevant predictors correctly excluded
+  false_exclusion_rate <- false_exclusion / length(true_predictors)                  # Proportion of true predictors incorrectly excluded
 
   # Construct the confusion matrix
   confusion_matrix <- matrix(
@@ -263,65 +551,91 @@ calculate_inclusion_metrics <- function(selected_predictors, true_predictors, to
     byrow = TRUE,
     dimnames = list("Actual" = c("Non-zero", "Zero"), "Predicted" = c("Included", "Excluded"))
   )
-  
-  return(confusion_matrix)
+
+  # Print rates
+  cat("\nTrue Inclusion Rate:", round(true_inclusion_rate, 3))
+  cat("\nFalse Inclusion Rate:", round(false_inclusion_rate, 3))
+  cat("\nTrue Exclusion Rate:", round(true_exclusion_rate, 3))
+  cat("\nFalse Exclusion Rate:", round(false_exclusion_rate, 3), "\n")
+
+  return(list(
+    confusion_matrix = confusion_matrix,
+    true_inclusion_rate = true_inclusion_rate,
+    false_inclusion_rate = false_inclusion_rate,
+    true_exclusion_rate = true_exclusion_rate,
+    false_exclusion_rate = false_exclusion_rate
+  ))
 }
+
 ```
 
 
 ```{r}
+generate_analysis_results <- function(cv_results_list, true_predictors, custom_size = NULL) {
+  final_predictors_list <- list()
+  confusion_matrices <- list()
+  
+  # Loop over each cross-validation result in the list
+  for (method in names(cv_results_list)) {
+    cat("\nProcessing", method, "Cross-Validation:\n")
+    
+    # Generate ranking
+    ranking_result <- ranking(cv_results_list[[method]])
+    
+    # Determine the size: either suggested or user-specified
+    if (is.null(custom_size)) {
+      suggested_size <- suggest_size(cv_results_list[[method]], stat = "mlpd")
+    } else {
+      suggested_size <- custom_size
+    }
+    
+    # Get the final selected predictors
+    final_predictors <- head(ranking_result[["fulldata"]], suggested_size)
+    final_predictors_list[[method]] <- final_predictors
+    
+    # Generate and print the confusion matrix
+    confusion_matrix <- calculate_inclusion_metrics(final_predictors, true_predictors)
+    print(confusion_matrix)
+    confusion_matrices[[method]] <- confusion_matrix
+  }
+  
+  # return(list(
+  #   final_predictors = final_predictors_list,
+  #   confusion_matrices = confusion_matrices
+  # ))
+}
+
+```
+
+
+```{r}
+# cross_validation list
+cv_results_list <- list(
+  "2-fold" = cvvs_2fold_s1_small_r1,
+  "5-fold" = cvvs_5fold_s1_small_r1,
+  "10-fold" = cvvs_10fold_s1_small_r1
+)
+
+# Define true predictors
 true_predictors <- paste0("X", 1:10)
-predictors_final <- head(rk[["fulldata"]], 6)
 
-confusion_matrix <- calculate_inclusion_metrics(predictors_final, true_predictors)
-print(confusion_matrix)
+# Run the function and get the analysis results
+generate_analysis_results(cv_results_list, true_predictors, custom_size = 10)
 ```
 
+##### defaults when fitting reference model
 
-# scenario 2
-
-## small n
-```{r}
-# read in the data with correlation 0.4
-data_sierra_s2 = read.csv("p50/sim_p50_t10_corr0.4_first10.csv")
-```
-
-```{r}
-data_s2_r1 <- data_sierra_s2 %>% 
-  filter(data_sierra_s2$N == 100, data_sierra_s2$r == 1) %>%
-  select(-N, -r, -X)
-head(data_s2_r1)
-```
-
-```{r}
-dim(data_s2_r1)
-```
-
-```{r}
-# Number of regression coefficients:
-( D <- sum(grepl("^X", names(data_s2_r1))) )
-# Prior guess for the number of relevant (i.e., non-zero) regression
-# coefficients:
-p0 <- 5
-# Number of observations:
-N <- nrow(data_s2_r1)
-# Hyperprior scale for tau, the global shrinkage parameter (note that for the
-# Gaussian family, 'rstanarm' will automatically scale this by the residual
-# standard deviation):
-tau0 <- p0 / (D - p0) * 1 / sqrt(N)
-```
-
-# reference model
 ```{r}
 start.time <- Sys.time()
 
-set.seed(seed)
-refm_fit_s2 <- stan_glm(
-  y ~ .,
-  family = gaussian(),
-  data = data_s2_r1,
-  prior = hs(global_scale = tau0),
-  chains = 4, iter = 2000,
+refm_default_fit_s1_small_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s1_small_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
   refresh = 0
 )
 
@@ -332,28 +646,29 @@ time.taken
 
 
 ```{r}
-yrep <- posterior_predict(refm_fit_s2, draws = 50)
-ppc_dens_overlay(data_s2_r1$y, yrep)
+yrep <- posterior_predict(refm_default_fit_s1_small_r1, draws = 50)
+ppc_dens_overlay(data_s1_small_r1$y, yrep)
+```
+
+```{r}
+refm_default_obj_s1_small_r1 <- get_refmodel(refm_default_fit_s1_small_r1)
 ```
 
 
-### Preliminary cv_varsel() run
-```{r}
-refm_obj_s2 <- get_refmodel(refm_fit_s2)
-```
-
 
 ```{r}
-# Preliminary cv_varsel() run:
 start.time <- Sys.time()
 
-cvvs_fast_s2 <- cv_varsel(
-  refm_obj_s2,
-  validate_search = FALSE,
-  ### Only for the sake of speed (not recommended in general):
-  method = "L1",
-  refit_prj = FALSE,
-  nterms_max = 20,
+cvvs_5fold_s1_small_r1_default_refm <- cv_varsel(
+  refm_default_obj_s1_small_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
 )
 
@@ -363,17 +678,41 @@ time.taken
 ```
 
 ```{r}
-plot(cvvs_fast_s2, stats = "mlpd", ranking_nterms_max = NA)
+plot(cvvs_5fold_s1_small_r1_default_refm, stats = "mlpd", deltas = TRUE)
 ```
 
+
+### small n replication 2
+```{r}
+# read in the data and take a look
+data_s1_small_r2 <- load_filter_standardize_data("p50/sim_p50_t10.csv", sample_size = 100, replication = 2)
+
+head(data_s1_small_r2)
+```
+
+#### reference model
 ```{r}
 start.time <- Sys.time()
 
-# Preliminary cv_varsel() run with `refit_prj = TRUE`:
-cvvs_fast_refit_s2 <- cv_varsel(
-  cvvs_fast_s2,
-  nclusters_pred = 20,
-  verbose = FALSE
+# set.seed(seed)
+# refm_fit <- stan_glm(
+#   y ~ .,
+#   family = gaussian(),
+#   data = data_r1,
+#   prior = hs(global_scale = tau0),
+#   chains = 4, iter = 2000,
+#   refresh = 0
+# )
+
+refm_fit_s1_small_r2 <- brm(
+  formula = y ~ ., 
+  data = data_s1_small_r2,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
 )
 
 end.time <- Sys.time()
@@ -381,29 +720,26 @@ time.taken <- round(end.time - start.time,2)
 time.taken
 ```
 
+
 ```{r}
-plot(cvvs_fast_refit_s2, stats = "mlpd", ranking_nterms_max = NA)
+refm_obj_s1_small_r2 <- get_refmodel(refm_fit_s1_small_r2)
 ```
 
-
-### final cv_varsel() run kfold
+#### cv_varsel() run on k-fold
 ```{r}
 # final cv_varsel() run
 start.time <- Sys.time()
 
-# Refit the reference model K times:
-cv_fits_10fold_s2 <- run_cvfun(
-  refm_obj_s2,
-  K = 10
-)
-
-cvvs_10fold_s2 <- cv_varsel(
-  refm_obj_s2,
+cvvs_2fold_s1_small_r2 <- cv_varsel(
+  refm_obj_s1_small_r2,
   cv_method = "kfold",
-  cvfits = cv_fits_10fold_s2,
-  method = "L1",
-  nclusters_pred = 20,
-  nterms_max = 13,
+  K = 2,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
 )
 
@@ -412,25 +748,26 @@ time.taken <- round(end.time - start.time,2)
 time.taken
 ```
 
+
 ```{r}
-plot(cvvs_10fold_s2, stats = "mlpd", deltas = TRUE)
+plot(cvvs_2fold_s1_small_r2, stats = "mlpd", deltas = TRUE)
 ```
 
 
-### final cv_varsel() run LOO
 ```{r}
-# final cv_varsel() run LOO
 start.time <- Sys.time()
 
-# Refit the reference model using LOO-CV
-
-cvvs_loo_s2 <- cv_varsel(
-  refm_obj_s2,
-  cv_method = "LOO",
-  nloo = N,
-  method = "L1",
-  nclusters_pred = 20,
-  nterms_max = 13,
+# 5-fold cv
+cvvs_5fold_s1_small_r2 <- cv_varsel(
+  refm_obj_s1_small_r2,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
 )
 
@@ -441,49 +778,376 @@ time.taken
 
 
 ```{r}
-plot(cvvs_loo_s2, stats = "mlpd", deltas = TRUE)
+plot(cvvs_5fold_s1_small_r2, stats = "mlpd", deltas = TRUE)
 ```
 
 
 ```{r}
-suggest_size(cvvs_loo_s2, stat = "mlpd")
+start.time <- Sys.time()
+
+# 10-fold cv
+cvvs_10fold_s1_small_r2 <- cv_varsel(
+  refm_obj_s1_small_r2,
+  cv_method = "kfold",
+  K = 10,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
 ```
 
-### cv run summary
+
 ```{r}
-smmry <- summary(cvvs_loo_s2, stats = "mlpd", type = c("mean", "lower", "upper"),
-                 deltas = TRUE)
-print(smmry, digits = 1)
+plot(cvvs_10fold_s1_small_r2, stats = "mlpd", deltas = TRUE)
 ```
 
-### variable selection
+```{r}
+print(paste("The suggested model size based on MLPD using 2-fold-CV is", suggest_size(cvvs_2fold_s1_small_r2, stat = "mlpd")))
+print(paste("The suggested model size based on MLPD using 5-fold-CV is", suggest_size(cvvs_5fold_s1_small_r2, stat = "mlpd")))
+print(paste("The suggested model size based on MLPD using 10-fold-CV is", suggest_size(cvvs_10fold_s1_small_r2, stat = "mlpd")))
+```
+#### confusion matrix
+```{r}
+# cross_validation list
+cv_results_list <- list(
+  "2-fold" = cvvs_2fold_s1_small_r2,
+  "5-fold" = cvvs_5fold_s1_small_r2,
+  "10-fold" = cvvs_10fold_s1_small_r2
+)
+
+# Define true predictors
+true_predictors <- paste0("X", 1:10)
+
+# Run the function and get the analysis results
+generate_analysis_results(cv_results_list, true_predictors, custom_size = 10)
+```
+
+## large n
+### large n replication 1
+```{r}
+# read in the data and take a look
+data_s1_large_r1 <- load_filter_standardize_data("p50/sim_p50_t10.csv", sample_size = 400, replication = 1)
+
+head(data_s1_large_r1)
+```
+
+
+#### reference model
+```{r}
+start.time <- Sys.time()
+
+refm_fit_s1_large_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s1_large_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_fit_s1_large_r1, draws = 50)
+ppc_dens_overlay(data_s1_large_r1$y, yrep)
+```
+
+
+#### final cv_varsel() run kfold
+```{r}
+refm_obj_s1_large_r1 <- get_refmodel(refm_fit_s1_large_r1)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_2fold_s1_large_r1 <- cv_varsel(
+  refm_obj_s1_large_r1,
+  cv_method = "kfold",
+  K = 2,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_2fold_s1_large_r1, stats = "mlpd", deltas = TRUE)
+```
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_5fold_s1_large_r1 <- cv_varsel(
+  refm_obj_s1_large_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_5fold_s1_large_r1, stats = "mlpd", deltas = TRUE)
+```
+
+
+# scenario 2
+corr 0.4 and mixed true effects
+## small n
+
+```{r}
+# read in the data with correlation 0.4
+# data_sierra_s2 = read.csv("p50/sim_p50_t10_corr0.4_first10.csv")
+```
+
+```{r}
+# data_s2_r1 <- data_sierra_s2 %>% 
+#   filter(data_sierra_s2$N == 100, data_sierra_s2$r == 1) %>%
+#   select(-N, -r, -X)
+# head(data_s2_r1)
+```
+
+### small n replication 1
+```{r}
+# read in the data and take a look
+data_s2_small_r1 <- load_filter_standardize_data("p50/sim_p50_t10_corr0.4_first10.csv", sample_size = 100, replication = 1)
+
+head(data_s2_small_r1)
+```
+
+
+#### reference model
+```{r}
+start.time <- Sys.time()
+
+refm_fit_s2_small_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s2_small_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_fit_s2_small_r1, draws = 50)
+ppc_dens_overlay(data_s2_small_r1$y, yrep)
+```
+
+
+#### Preliminary cv_varsel() run
+
+
+```{r}
+# Preliminary cv_varsel() run:
+# start.time <- Sys.time()
+# 
+# cvvs_fast_s2 <- cv_varsel(
+#   refm_obj_s2,
+#   validate_search = FALSE,
+#   ### Only for the sake of speed (not recommended in general):
+#   method = "L1",
+#   refit_prj = FALSE,
+#   nterms_max = 20,
+#   verbose = FALSE
+# )
+# 
+# end.time <- Sys.time()
+# time.taken <- round(end.time - start.time,2)
+# time.taken
+```
+
+```{r}
+# plot(cvvs_fast_s2, stats = "mlpd", ranking_nterms_max = NA)
+```
+
+```{r}
+# start.time <- Sys.time()
+# 
+# # Preliminary cv_varsel() run with `refit_prj = TRUE`:
+# cvvs_fast_refit_s2 <- cv_varsel(
+#   cvvs_fast_s2,
+#   nclusters_pred = 20,
+#   verbose = FALSE
+# )
+# 
+# end.time <- Sys.time()
+# time.taken <- round(end.time - start.time,2)
+# time.taken
+```
+
+```{r}
+# plot(cvvs_fast_refit_s2, stats = "mlpd", ranking_nterms_max = NA)
+```
+
+
+#### final cv_varsel() run kfold
+```{r}
+refm_obj_s2_small_r1 <- get_refmodel(refm_fit_s2_small_r1)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_5fold_s2_small_r1 <- cv_varsel(
+  refm_obj_s2_small_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_5fold_s2_small_r1, stats = "mlpd", deltas = TRUE)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+# 10-fold cv
+cvvs_10fold_s2_small_r1 <- cv_varsel(
+  refm_obj_s2_small_r1,
+  cv_method = "kfold",
+  K = 10,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_10fold_s2_small_r1, stats = "mlpd", deltas = TRUE)
+```
+
+
+#### final cv_varsel() run LOO
+```{r}
+# final cv_varsel() run LOO
+# start.time <- Sys.time()
+# 
+# # Refit the reference model using LOO-CV
+# 
+# cvvs_loo_s2 <- cv_varsel(
+#   refm_obj_s2,
+#   cv_method = "LOO",
+#   nloo = N,
+#   method = "L1",
+#   nclusters_pred = 20,
+#   nterms_max = 13,
+#   verbose = FALSE
+# )
+# 
+# end.time <- Sys.time()
+# time.taken <- round(end.time - start.time,2)
+# time.taken
+```
+
+
+```{r}
+# plot(cvvs_loo_s2, stats = "mlpd", deltas = TRUE)
+```
+
+
+```{r}
+# suggest_size(cvvs_loo_s2, stat = "mlpd")
+```
+
+#### cv run summary
+```{r}
+# smmry <- summary(cvvs_loo_s2, stats = "mlpd", type = c("mean", "lower", "upper"),
+#                  deltas = TRUE)
+# print(smmry, digits = 1)
+```
+
+#### variable selection
 ```{r}
 # predictor rankings
-rk_s2 <- ranking(cvvs_loo_s2)
+# rk_s2 <- ranking(cvvs_loo_s2)
 ```
 
 
 ```{r}
 # ranking proportions
-pr_rk_s2 <- cv_proportions(rk_s2)
+# pr_rk_s2 <- cv_proportions(rk_s2)
 ```
 
 ```{r}
-rk_s2[["fulldata"]]
+# rk_s2[["fulldata"]]
 ```
 
 ```{r}
-plot(pr_rk_s2)
+# plot(pr_rk_s2)
 ```
 
 ```{r}
-predictors_final <- head(rk_s2[["fulldata"]], 8)
+# predictors_final <- head(rk_s2[["fulldata"]], 8)
 ```
 
 ```{r}
-plot(cv_proportions(rk_s2, cumulate = TRUE))
+# plot(cv_proportions(rk_s2, cumulate = TRUE))
 ```
-### projection
+#### projection
 ```{r}
 # final submodel once again
 prj_s2 <- project(
@@ -508,61 +1172,36 @@ prj_smmry_s2 <- as.data.frame(prj_smmry_s2)
 print(prj_smmry_s2, digits = 1)
 ```
 
-### confusion matrix
+#### confusion matrix
 
 ```{r}
+# cross_validation list
+cv_results_list <- list(
+  "5-fold" = cvvs_5fold_s2_small_r1,
+  "10-fold" = cvvs_10fold_s2_small_r1
+)
+
+# Define true predictors
 true_predictors <- paste0("X", 1:10)
-predictors_final <- head(rk_s2[["fulldata"]], 8)
 
-confusion_matrix <- calculate_inclusion_metrics(predictors_final, true_predictors)
-print(confusion_matrix)
+# Run the function and get the analysis results
+generate_analysis_results(cv_results_list, true_predictors, custom_size = 10)
 ```
 
 
-# scenario 3
+##### defaults when fitting reference model
 
-## small n
-```{r}
-# read in the data with correlation 0.4 and mixed true effects
-data_sierra_s3 = read.csv("p50/sim_p50_t10_corr0.4_mixed.csv")
-```
-
-```{r}
-data_s3_r1 <- data_sierra_s3 %>% 
-  filter(data_sierra_s3$N == 100, data_sierra_s3$r == 1) %>%
-  select(-N, -r, -X)
-head(data_s3_r1)
-```
-
-```{r}
-dim(data_s3_r1)
-```
-
-```{r}
-# Number of regression coefficients:
-( D <- sum(grepl("^X", names(data_s3_r1))) )
-# Prior guess for the number of relevant (i.e., non-zero) regression
-# coefficients:
-p0 <- 5
-# Number of observations:
-N <- nrow(data_s3_r1)
-# Hyperprior scale for tau, the global shrinkage parameter (note that for the
-# Gaussian family, 'rstanarm' will automatically scale this by the residual
-# standard deviation):
-tau0 <- p0 / (D - p0) * 1 / sqrt(N)
-```
-
-# reference model
 ```{r}
 start.time <- Sys.time()
 
-set.seed(seed)
-refm_fit_s3 <- stan_glm(
-  y ~ .,
-  family = gaussian(),
-  data = data_s3_r1,
-  prior = hs(global_scale = tau0),
-  chains = 4, iter = 2000,
+refm_default_fit_s2_small_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s2_small_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
   refresh = 0
 )
 
@@ -573,77 +1212,29 @@ time.taken
 
 
 ```{r}
-yrep <- posterior_predict(refm_fit_s3, draws = 50)
-ppc_dens_overlay(data_s3_r1$y, yrep)
-```
-
-### Preliminary cv_varsel() run
-```{r}
-refm_obj_s3 <- get_refmodel(refm_fit_s3)
-```
-
-
-```{r}
-# Preliminary cv_varsel() run:
-start.time <- Sys.time()
-
-cvvs_fast_s3 <- cv_varsel(
-  refm_obj_s3,
-  validate_search = FALSE,
-  ### Only for the sake of speed (not recommended in general):
-  method = "L1",
-  refit_prj = FALSE,
-  nterms_max = 20,
-  verbose = FALSE
-)
-
-end.time <- Sys.time()
-time.taken <- round(end.time - start.time,2)
-time.taken
+yrep <- posterior_predict(refm_default_fit_s2_small_r1, draws = 50)
+ppc_dens_overlay(data_s2_small_r1$y, yrep)
 ```
 
 ```{r}
-plot(cvvs_fast_s3, stats = "mlpd", ranking_nterms_max = NA)
+refm_default_obj_s2_small_r1 <- get_refmodel(refm_default_fit_s2_small_r1)
 ```
+
 
 
 ```{r}
 start.time <- Sys.time()
 
-# Preliminary cv_varsel() run with `refit_prj = TRUE`:
-cvvs_fast_refit_s3 <- cv_varsel(
-  cvvs_fast_s3,
-  nclusters_pred = 20,
-  verbose = FALSE
-)
-
-end.time <- Sys.time()
-time.taken <- round(end.time - start.time,2)
-time.taken
-```
-
-```{r}
-plot(cvvs_fast_refit_s3, stats = "mlpd", ranking_nterms_max = NA)
-```
-
-### final cv_varsel() run kfold
-```{r}
-# final cv_varsel() run
-start.time <- Sys.time()
-
-# Refit the reference model K times:
-cv_fits_10fold_s3 <- run_cvfun(
-  refm_obj_s3,
-  K = 10
-)
-
-cvvs_10fold_s3 <- cv_varsel(
-  refm_obj_s3,
+cvvs_5fold_s2_small_r1_default_refm <- cv_varsel(
+  refm_default_obj_s2_small_r1,
   cv_method = "kfold",
-  cvfits = cv_fits_10fold_s3,
-  method = "L1",
-  nclusters_pred = 20,
-  nterms_max = 13,
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
 )
 
@@ -653,11 +1244,324 @@ time.taken
 ```
 
 ```{r}
-plot(cvvs_10fold_s3, stats = "mlpd", deltas = TRUE)
+plot(cvvs_5fold_s2_small_r1_default_refm, stats = "mlpd", deltas = TRUE)
+```
+
+### small n replication 2
+```{r}
+# read in the data and take a look
+data_s2_small_r2 <- load_filter_standardize_data("p50/sim_p50_t10_corr0.4_first10.csv", sample_size = 100, replication = 2)
+
+head(data_s2_small_r2)
 ```
 
 
-### final cv_varsel() run LOO
+#### reference model
+```{r}
+start.time <- Sys.time()
+
+refm_fit_s2_small_r2 <- brm(
+  formula = y ~ ., 
+  data = data_s2_small_r2,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+yrep <- posterior_predict(refm_fit_s2_small_r2, draws = 50)
+ppc_dens_overlay(data_s2_small_r2$y, yrep)
+```
+
+#### final cv_varsel() run kfold
+```{r}
+refm_obj_s2_small_r2 <- get_refmodel(refm_fit_s2_small_r2)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_5fold_s2_small_r2 <- cv_varsel(
+  refm_obj_s2_small_r2,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_5fold_s2_small_r2, stats = "mlpd", deltas = TRUE)
+```
+
+Again replication 2 is better. A pattern?...
+
+#### confusion matrix
+```{r}
+# cross_validation list
+cv_results_list <- list(
+  "2-fold" = cvvs_2fold_s2_small_r2,
+  "5-fold" = cvvs_5fold_s2_small_r2
+)
+
+# Define true predictors
+true_predictors <- paste0("X", 1:10)
+
+# Run the function and get the analysis results
+generate_analysis_results(cv_results_list, true_predictors, custom_size = 10)
+```
+
+## large n
+### large n replication 1
+```{r}
+# read in the data and take a look
+data_s2_large_r1 <- load_filter_standardize_data("p50/sim_p50_t10_corr0.4_first10.csv", sample_size = 400, replication = 1)
+
+head(data_s2_large_r1)
+```
+
+
+#### reference model
+```{r}
+start.time <- Sys.time()
+
+refm_fit_s2_large_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s2_large_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_fit_s2_large_r1, draws = 50)
+ppc_dens_overlay(data_s2_large_r1$y, yrep)
+```
+
+
+#### final cv_varsel() run kfold
+```{r}
+refm_obj_s2_large_r1 <- get_refmodel(refm_fit_s2_large_r1)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_2fold_s2_large_r1 <- cv_varsel(
+  refm_obj_s2_large_r1,
+  cv_method = "kfold",
+  K = 2,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_2fold_s2_large_r1, stats = "mlpd", deltas = TRUE)
+```
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_5fold_s2_large_r1 <- cv_varsel(
+  refm_obj_s2_large_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_5fold_s2_large_r1, stats = "mlpd", deltas = TRUE)
+```
+
+```{r}
+start.time <- Sys.time()
+
+# 10-fold cv
+cvvs_10fold_s2_large_r1 <- cv_varsel(
+  refm_obj_s2_large_r1,
+  cv_method = "kfold",
+  K = 10,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_10fold_s2_large_r1, stats = "mlpd", deltas = TRUE)
+```
+
+For large n (400) here in scenario 2, 2-fold and 5-fold seems enough to identify the right set of predictors, but the "confidence" (ranking proportions) is not much with 2-fold and 5-fold.
+
+```{r}
+print(paste("The suggested model size based on MLPD using 2-fold-CV is", suggest_size(cvvs_2fold_s2_large_r1, stat = "mlpd")))
+print(paste("The suggested model size based on MLPD using 5-fold-CV is", suggest_size(cvvs_5fold_s2_large_r1, stat = "mlpd")))
+print(paste("The suggested model size based on MLPD using 10-fold-CV is", suggest_size(cvvs_10fold_s2_large_r1, stat = "mlpd")))
+```
+
+
+# scenario 3
+corr 0.4 and clustered true effects
+## small n
+### small n replication 1
+```{r}
+# read in the data and take a look
+# the suffix says "mixed", but it corresponds to corr 0.4 clustered true effects in table 2 in paper
+data_s3_small_r1 <- load_filter_standardize_data("p50/sim_p50_t10_corr0.4_mixed.csv", sample_size = 100, replication = 1)
+
+head(data_s3_small_r1)
+```
+
+
+#### reference model
+```{r}
+start.time <- Sys.time()
+
+refm_fit_s3_small_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s3_small_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_fit_s3_small_r1, draws = 50)
+ppc_dens_overlay(data_s3_small_r1$y, yrep)
+```
+
+
+
+#### final cv_varsel() run kfold
+```{r}
+refm_obj_s3_small_r1 <- get_refmodel(refm_fit_s3_small_r1)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_5fold_s3_small_r1 <- cv_varsel(
+  refm_obj_s3_small_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_5fold_s3_small_r1, stats = "mlpd", deltas = TRUE)
+```
+
+X1, X6, X11, X16, X21, X26, X31, X36, X41, X46 are true predictors
+ordering should be X1, X26, (X6, X11, X31, X36), (X16, X21, X41, X46)
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_10fold_s3_small_r1 <- cv_varsel(
+  refm_obj_s3_small_r1,
+  cv_method = "kfold",
+  K = 10,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+A warning message not seen before
+
+```{r}
+plot(cvvs_10fold_s3_small_r1, stats = "mlpd", deltas = TRUE)
+```
+
+X1, X6, X11, X16, X21, X26, X31, X36, X41, X46 are true predictors
+ordering should be X1, X26, (X6, X11, X31, X36), (X16, X21, X41, X46)
+
+#### final cv_varsel() run LOO
 ```{r}
 # final cv_varsel() run LOO
 start.time <- Sys.time()
@@ -715,14 +1619,14 @@ plot(cvvs_loo_s3_nterms_max_15, stats = "mlpd", deltas = TRUE)
 suggest_size(cvvs_loo_s3_nterms_max_15, stat = "mlpd")
 ```
 
-### cv run summary
+#### cv run summary
 ```{r}
 # smmry <- summary(cvvs_loo_s3, stats = "mlpd", type = c("mean", "lower", "upper"),
 #                  deltas = TRUE)
 # print(smmry, digits = 1)
 ```
 
-### variable selection
+#### variable selection
 ```{r}
 # predictor rankings
 rk_s3 <- ranking(cvvs_loo_s3_nterms_max_15)
@@ -751,7 +1655,7 @@ plot(cv_proportions(rk_s3, cumulate = TRUE))
 predictors_final <- head(rk_s3[["fulldata"]], 13)
 ```
 
-### projection
+#### projection
 ```{r}
 # final submodel once again
 prj_s3 <- project(
@@ -776,61 +1680,306 @@ prj_smmry_s3 <- as.data.frame(prj_smmry_s3)
 print(prj_smmry_s3, digits = 1)
 ```
 
-### confusion matrix
-
+#### confusion matrix
 ```{r}
-true_predictors <- paste0("X", seq(1, 50, 5))
-predictors_final <- head(rk_s3[["fulldata"]], 6)
+# cross_validation list
+cv_results_list <- list(
+  "5-fold" = cvvs_5fold_s3_small_r1,
+  "10-fold" = cvvs_10fold_s3_small_r1
+)
 
-confusion_matrix <- calculate_inclusion_metrics(predictors_final, true_predictors)
-print(confusion_matrix)
+# Define true predictors
+true_predictors <- paste0("X", seq(1, 50, 5))
+
+# Run the function and get the analysis results
+generate_analysis_results(cv_results_list, true_predictors, custom_size = 10)
 ```
 
+
+##### defaults when fitting reference model
+
+```{r}
+start.time <- Sys.time()
+
+refm_default_fit_s3_small_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s3_small_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_default_fit_s3_small_r1, draws = 50)
+ppc_dens_overlay(data_s3_small_r1$y, yrep)
+```
+
+```{r}
+refm_default_obj_s3_small_r1 <- get_refmodel(refm_default_fit_s3_small_r1)
+```
+
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_5fold_s3_small_r1_default_refm <- cv_varsel(
+  refm_default_obj_s3_small_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_5fold_s3_small_r1_default_refm, stats = "mlpd", deltas = TRUE)
+```
+
+
+### small n replication 2
+```{r}
+# read in the data and take a look
+data_s3_small_r2 <- load_filter_standardize_data("p50/sim_p50_t10_corr0.4_mixed.csv", sample_size = 100, replication = 2)
+
+head(data_s3_small_r2)
+```
+
+
+#### reference model
+```{r}
+start.time <- Sys.time()
+
+refm_fit_s3_small_r2 <- brm(
+  formula = y ~ ., 
+  data = data_s3_small_r2,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_fit_s3_small_r2, draws = 50)
+ppc_dens_overlay(data_s3_small_r2$y, yrep)
+```
+
+
+#### final cv_varsel() run kfold
+```{r}
+refm_obj_s3_small_r2 <- get_refmodel(refm_fit_s3_small_r2)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_2fold_s3_small_r2 <- cv_varsel(
+  refm_obj_s3_small_r2,
+  cv_method = "kfold",
+  K = 2,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_2fold_s3_small_r2, stats = "mlpd", deltas = TRUE)
+```
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_5fold_s3_small_r2 <- cv_varsel(
+  refm_obj_s3_small_r2,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_5fold_s3_small_r2, stats = "mlpd", deltas = TRUE)
+```
+
+
+#### confusion matrix
+```{r}
+# cross_validation list
+cv_results_list <- list(
+  "2-fold" = cvvs_2fold_s3_small_r2,
+  "5-fold" = cvvs_5fold_s3_small_r2
+)
+
+# Define true predictors
+true_predictors <- paste0("X", seq(1, 50, 5))
+
+# Run the function and get the analysis results
+generate_analysis_results(cv_results_list, true_predictors, custom_size = 10)
+```
+
+## large n
+### large n replication 1
+```{r}
+# read in the data and take a look
+data_s3_large_r1 <- load_filter_standardize_data("p50/sim_p50_t10_corr0.4_mixed.csv", sample_size = 400, replication = 1)
+
+head(data_s3_large_r1)
+```
+
+
+#### reference model
+```{r}
+start.time <- Sys.time()
+
+refm_fit_s3_large_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s3_large_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_fit_s3_large_r1, draws = 50)
+ppc_dens_overlay(data_s3_large_r1$y, yrep)
+```
+
+
+#### final cv_varsel() run kfold
+```{r}
+refm_obj_s3_large_r1 <- get_refmodel(refm_fit_s3_large_r1)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_2fold_s3_large_r1 <- cv_varsel(
+  refm_obj_s3_large_r1,
+  cv_method = "kfold",
+  K = 2,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_2fold_s3_large_r1, stats = "mlpd", deltas = TRUE)
+```
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_5fold_s3_large_r1 <- cv_varsel(
+  refm_obj_s3_large_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_5fold_s3_large_r1, stats = "mlpd", deltas = TRUE)
+```
 
 # scenario 4
-
+corr 0.8 and mixed true effects
 ## small n
+### small n replication 1
 ```{r}
-# read in the data with correlation 0.8
-data_sierra_s4 = read.csv("p50/sim_p50_t10_corr0.8_first10.csv")
+# read in the data and take a look
+data_s4_small_r1 <- load_filter_standardize_data("p50/sim_p50_t10_corr0.8_first10.csv", sample_size = 100, replication = 1)
+
+head(data_s4_small_r1)
 ```
 
-```{r}
-data_s4_r1 <- data_sierra_s4 %>% 
-  filter(data_sierra_s4$N == 100, data_sierra_s4$r == 1) %>%
-  select(-N, -r, -X)
-head(data_s4_r1)
-```
 
-```{r}
-dim(data_s4_r1)
-```
-
-```{r}
-# Number of regression coefficients:
-D <- sum(grepl("^X", names(data_s4_r1))) 
-# Prior guess for the number of relevant (i.e., non-zero) regression
-# coefficients:
-p0 <- 5
-# Number of observations:
-N <- nrow(data_s4_r1)
-# Hyperprior scale for tau, the global shrinkage parameter (note that for the
-# Gaussian family, 'rstanarm' will automatically scale this by the residual
-# standard deviation):
-tau0 <- p0 / (D - p0) * 1 / sqrt(N)
-```
-
-# reference model
+#### reference model
 ```{r}
 start.time <- Sys.time()
 
-set.seed(seed)
-refm_fit_s4 <- stan_glm(
-  y ~ .,
-  family = gaussian(),
-  data = data_s4_r1,
-  prior = hs(global_scale = tau0),
-  chains = 4, iter = 2000,
+refm_fit_s4_small_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s4_small_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
   refresh = 0
 )
 
@@ -841,77 +1990,30 @@ time.taken
 
 
 ```{r}
-yrep <- posterior_predict(refm_fit_s4, draws = 50)
-ppc_dens_overlay(data_s4_r1$y, yrep)
-```
-
-### Preliminary cv_varsel() run
-```{r}
-refm_obj_s4 <- get_refmodel(refm_fit_s4)
+yrep <- posterior_predict(refm_fit_s4_small_r1, draws = 50)
+ppc_dens_overlay(data_s4_small_r1$y, yrep)
 ```
 
 
+#### final cv_varsel() run kfold
 ```{r}
-# Preliminary cv_varsel() run:
-start.time <- Sys.time()
-
-cvvs_fast_s4 <- cv_varsel(
-  refm_obj_s4,
-  validate_search = FALSE,
-  ### Only for the sake of speed (not recommended in general):
-  method = "L1",
-  refit_prj = FALSE,
-  nterms_max = 20,
-  verbose = FALSE
-)
-
-end.time <- Sys.time()
-time.taken <- round(end.time - start.time,2)
-time.taken
-```
-
-```{r}
-plot(cvvs_fast_s4, stats = "mlpd", ranking_nterms_max = NA)
+refm_obj_s4_small_r1 <- get_refmodel(refm_fit_s4_small_r1)
 ```
 
 
 ```{r}
 start.time <- Sys.time()
 
-# Preliminary cv_varsel() run with `refit_prj = TRUE`:
-cvvs_fast_refit_s4 <- cv_varsel(
-  cvvs_fast_s4,
-  nclusters_pred = 20,
-  verbose = FALSE
-)
-
-end.time <- Sys.time()
-time.taken <- round(end.time - start.time,2)
-time.taken
-```
-
-```{r}
-plot(cvvs_fast_refit_s4, stats = "mlpd", ranking_nterms_max = NA)
-```
-
-### final cv_varsel() run kfold
-```{r}
-# final cv_varsel() run
-start.time <- Sys.time()
-
-# Refit the reference model K times:
-cv_fits_10fold_s4 <- run_cvfun(
-  refm_obj_s4,
-  K = 10
-)
-
-cvvs_10fold_s4 <- cv_varsel(
-  refm_obj_s4,
+cvvs_5fold_s4_small_r1 <- cv_varsel(
+  refm_obj_s4_small_r1,
   cv_method = "kfold",
-  cvfits = cv_fits_10fold_s4,
-  method = "L1",
-  nclusters_pred = 20,
-  nterms_max = 8,
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
 )
 
@@ -921,25 +2023,93 @@ time.taken
 ```
 
 ```{r}
-plot(cvvs_10fold_s4, stats = "mlpd", deltas = TRUE)
+plot(cvvs_5fold_s4_small_r1, stats = "mlpd", deltas = TRUE)
 ```
 
-
-### final cv_varsel() run LOO
 ```{r}
-# final cv_varsel() run LOO
 start.time <- Sys.time()
 
-# Refit the reference model using LOO-CV
-
-cvvs_loo_s4 <- cv_varsel(
-  refm_obj_s4,
-  cv_method = "LOO",
-  nloo = N,
-  method = "L1",
-  nclusters_pred = 20,
-  nterms_max = 13,
+cvvs_10fold_s4_small_r1 <- cv_varsel(
+  refm_obj_s4_small_r1,
+  cv_method = "kfold",
+  K = 10,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_10fold_s4_small_r1, stats = "mlpd", deltas = TRUE)
+```
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_10fold_s4_small_r1_fulldrawspred <- cv_varsel(
+  refm_obj_s4_small_r1,
+  cv_method = "kfold",
+  K = 10,
+  method = "forward",
+  nclusters = 20,
+  # ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_10fold_s4_small_r1_fulldrawspred, stats = "mlpd", deltas = TRUE)
+```
+
+
+
+#### confusion matrix
+
+```{r}
+# cross_validation list
+cv_results_list <- list(
+  "2-fold" = cvvs_2fold_s4_small_r1,
+  "5-fold" = cvvs_5fold_s4_small_r1,
+  "10-fold" = cvvs_10fold_s4_small_r1
+)
+
+# Define true predictors
+true_predictors <- paste0("X", 1:10)
+
+# Run the function and get the analysis results
+generate_analysis_results(cv_results_list, true_predictors, custom_size = 10)
+```
+
+
+##### defaults when fitting reference model
+
+```{r}
+start.time <- Sys.time()
+
+refm_default_fit_s4_small_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s4_small_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
 )
 
 end.time <- Sys.time()
@@ -949,127 +2119,245 @@ time.taken
 
 
 ```{r}
-plot(cvvs_loo_s4, stats = "mlpd", deltas = TRUE)
-```
-
-
-```{r}
-suggest_size(cvvs_loo_s4, stat = "mlpd")
-```
-
-### cv run summary
-```{r}
-# smmry <- summary(cvvs_loo_s4, stats = "mlpd", type = c("mean", "lower", "upper"),
-#                  deltas = TRUE)
-# print(smmry, digits = 1)
-```
-
-### variable selection
-```{r}
-# predictor rankings
-rk_s4 <- ranking(cvvs_loo_s4)
-```
-
-
-```{r}
-# ranking proportions
-pr_rk_s4 <- cv_proportions(rk_s4)
+yrep <- posterior_predict(refm_default_fit_s4_small_r1, draws = 50)
+ppc_dens_overlay(data_s4_small_r1$y, yrep)
 ```
 
 ```{r}
-rk_s4[["fulldata"]]
+refm_default_obj_s4_small_r1 <- get_refmodel(refm_default_fit_s4_small_r1)
 ```
 
-```{r}
-plot(pr_rk_s4)
-```
+
 
 ```{r}
-plot(cv_proportions(rk_s4, cumulate = TRUE))
-```
-```{r}
-predictors_final <- head(rk_s4[["fulldata"]], 10)
-```
+start.time <- Sys.time()
 
-### projection
-```{r}
-# final submodel once again
-prj_s4 <- project(
-  refm_obj_s2,
-  predictor_terms = predictors_final,
+cvvs_5fold_s4_small_r1_default_refm <- cv_varsel(
+  refm_default_obj_s4_small_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
 )
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
 ```
 
 ```{r}
-prj_mat_s4 <- as.matrix(prj_s4)
+plot(cvvs_5fold_s4_small_r1_default_refm, stats = "mlpd", deltas = TRUE)
 ```
 
+
+### small n replication 2
 ```{r}
-prj_drws_s4 <- as_draws_matrix(prj_mat_s4)
-prj_smmry_s4 <- summarize_draws(
-  prj_drws_s4,
-  "median", "mad", function(x) quantile(x, probs = c(0.025, 0.975))
+# read in the data and take a look
+data_s4_small_r2 <- load_filter_standardize_data("p50/sim_p50_t10_corr0.8_first10.csv", sample_size = 100, replication = 2)
+
+head(data_s4_small_r2)
+```
+
+
+#### reference model
+```{r}
+start.time <- Sys.time()
+
+refm_fit_s4_small_r2 <- brm(
+  formula = y ~ ., 
+  data = data_s4_small_r2,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
 )
 
-prj_smmry_s4 <- as.data.frame(prj_smmry_s4)
-print(prj_smmry_s4, digits = 1)
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
 ```
 
-### confusion matrix
 
 ```{r}
-true_predictors <- paste0("X", 1:10)
-predictors_final <- head(rk_s4[["fulldata"]], 6)
-
-confusion_matrix <- calculate_inclusion_metrics(predictors_final, true_predictors)
-print(confusion_matrix)
+yrep <- posterior_predict(refm_fit_s4_small_r2, draws = 50)
+ppc_dens_overlay(data_s4_small_r2$y, yrep)
 ```
+
+
+#### final cv_varsel() run kfold
+```{r}
+refm_obj_s4_small_r2 <- get_refmodel(refm_fit_s4_small_r2)
+```
+
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_5fold_s4_small_r2 <- cv_varsel(
+  refm_obj_s4_small_r2,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_5fold_s4_small_r2, stats = "mlpd", deltas = TRUE)
+```
+
+#### confusion matrix
+```{r}
+# cross_validation list
+cv_results_list <- list(
+  "2-fold" = cvvs_2fold_s1_small_r1,
+  "5-fold" = cvvs_5fold_s1_small_r1
+)
+
+# Define true predictors
+true_predictors <- paste0("X", 1:10)
+
+# Run the function and get the analysis results
+generate_analysis_results(cv_results_list, true_predictors, custom_size = 10)
+```
+
+## large n
+### large n replication 1
+```{r}
+# read in the data and take a look
+data_s4_large_r1 <- load_filter_standardize_data("p50/sim_p50_t10_corr0.8_first10.csv", sample_size = 400, replication = 1)
+
+head(data_s4_large_r1)
+```
+
+
+#### reference model
+```{r}
+start.time <- Sys.time()
+
+refm_fit_s4_large_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s4_large_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_fit_s4_large_r1, draws = 50)
+ppc_dens_overlay(data_s4_large_r1$y, yrep)
+```
+
+
+#### final cv_varsel() run kfold
+```{r}
+refm_obj_s4_large_r1 <- get_refmodel(refm_fit_s4_large_r1)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_2fold_s4_large_r1 <- cv_varsel(
+  refm_obj_s4_large_r1,
+  cv_method = "kfold",
+  K = 2,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_2fold_s4_large_r1, stats = "mlpd", deltas = TRUE)
+```
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_5fold_s4_large_r1 <- cv_varsel(
+  refm_obj_s4_large_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_5fold_s4_large_r1, stats = "mlpd", deltas = TRUE)
+```
+
+
 
 # scenario 5
-
+corr 0.8 and clustered true effects
 ## small n
+### small n replication 1
 ```{r}
-# read in the data with correlation 0.8 and mixed true effects
-data_sierra_s5 = read.csv("p50/sim_p50_t10_corr0.8_mixed.csv")
+# read in the data and take a look
+data_s5_small_r1 <- load_filter_standardize_data("p50/sim_p50_t10_corr0.8_mixed.csv", sample_size = 100, replication = 1)
+
+head(data_s5_small_r1)
 ```
 
-```{r}
-data_s5_r1 <- data_sierra_s5 %>% 
-  filter(data_sierra_s5$N == 100, data_sierra_s5$r == 1) %>%
-  select(-N, -r, -X)
-head(data_s5_r1)
-```
 
-```{r}
-dim(data_s5_r1)
-```
 
-```{r}
-# Number of regression coefficients:
-( D <- sum(grepl("^X", names(data_s5_r1))) )
-# Prior guess for the number of relevant (i.e., non-zero) regression
-# coefficients:
-p0 <- 5
-# Number of observations:
-N <- nrow(data_s5_r1)
-# Hyperprior scale for tau, the global shrinkage parameter (note that for the
-# Gaussian family, 'rstanarm' will automatically scale this by the residual
-# standard deviation):
-tau0 <- p0 / (D - p0) * 1 / sqrt(N)
-```
-
-# reference model
+#### reference model
 ```{r}
 start.time <- Sys.time()
 
-set.seed(seed)
-refm_fit_s5 <- stan_glm(
-  y ~ .,
-  family = gaussian(),
-  data = data_s5_r1,
-  prior = hs(global_scale = tau0),
-  chains = 4, iter = 2000,
+refm_fit_s5_small_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s5_small_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
   refresh = 0
 )
 
@@ -1080,27 +2368,30 @@ time.taken
 
 
 ```{r}
-yrep <- posterior_predict(refm_fit_s5, draws = 50)
-ppc_dens_overlay(data_s5_r1$y, yrep)
-```
-
-### Preliminary cv_varsel() run
-```{r}
-refm_obj_s5 <- get_refmodel(refm_fit_s5)
+yrep <- posterior_predict(refm_fit_s5_small_r1, draws = 50)
+ppc_dens_overlay(data_s5_small_r1$y, yrep)
 ```
 
 
+#### final cv_varsel() run kfold
 ```{r}
-# Preliminary cv_varsel() run:
+refm_obj_s5_small_r1 <- get_refmodel(refm_fit_s5_small_r1)
+```
+
+
+```{r}
 start.time <- Sys.time()
 
-cvvs_fast_s5 <- cv_varsel(
-  refm_obj_s5,
-  validate_search = FALSE,
-  ### Only for the sake of speed (not recommended in general):
-  method = "L1",
-  refit_prj = FALSE,
-  nterms_max = 20,
+cvvs_5fold_s5_small_r1 <- cv_varsel(
+  refm_obj_s5_small_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
 )
 
@@ -1110,17 +2401,25 @@ time.taken
 ```
 
 ```{r}
-plot(cvvs_fast_s5, stats = "mlpd", ranking_nterms_max = NA)
+plot(cvvs_5fold_s5_small_r1, stats = "mlpd", deltas = TRUE)
 ```
 
+X1, X6, X11, X16, X21, X26, X31, X36, X41, X46 are true predictors
+ordering should be X1, X26, (X6, X11, X31, X36), (X16, X21, X41, X46)
 
 ```{r}
 start.time <- Sys.time()
 
-# Preliminary cv_varsel() run with `refit_prj = TRUE`:
-cvvs_fast_refit_s5 <- cv_varsel(
-  cvvs_fast_s5,
-  nclusters_pred = 20,
+cvvs_10fold_s5_small_r1 <- cv_varsel(
+  refm_obj_s5_small_r1,
+  cv_method = "kfold",
+  K = 10,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
 )
 
@@ -1130,55 +2429,26 @@ time.taken
 ```
 
 ```{r}
-plot(cvvs_fast_refit_s5, stats = "mlpd", ranking_nterms_max = NA)
+plot(cvvs_10fold_s5_small_r1, stats = "mlpd", deltas = TRUE)
 ```
 
-### final cv_varsel() run kfold
-```{r}
-# final cv_varsel() run
-# start.time <- Sys.time()
-# 
-# # Refit the reference model K times:
-# cv_fits_10fold_s5 <- run_cvfun(
-#   refm_obj_s5,
-#   K = 10
-# )
-# 
-# cvvs_10fold_s5 <- cv_varsel(
-#   refm_obj_s5,
-#   cv_method = "kfold",
-#   cvfits = cv_fits_10fold_s5,
-#   method = "L1",
-#   nclusters_pred = 20,
-#   nterms_max = 13,
-#   verbose = FALSE
-# )
-# 
-# end.time <- Sys.time()
-# time.taken <- round(end.time - start.time,2)
-# time.taken
-```
+X1, X6, X11, X16, X21, X26, X31, X36, X41, X46 are true predictors
+ordering should be X1, X26, (X6, X11, X31, X36), (X16, X21, X41, X46)
+
+##### defaults when fitting reference model
 
 ```{r}
-# plot(cvvs_10fold_s5, stats = "mlpd", deltas = TRUE)
-```
-
-
-### final cv_varsel() run LOO
-```{r}
-# final cv_varsel() run LOO
 start.time <- Sys.time()
 
-# Refit the reference model using LOO-CV
-
-cvvs_loo_s5 <- cv_varsel(
-  refm_obj_s5,
-  cv_method = "LOO",
-  nloo = N,
-  method = "L1",
-  nclusters_pred = 20,
-  nterms_max = 20,
-  verbose = FALSE
+refm_default_fit_s5_small_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s5_small_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
 )
 
 end.time <- Sys.time()
@@ -1188,82 +2458,274 @@ time.taken
 
 
 ```{r}
-plot(cvvs_loo_s5, stats = "mlpd", deltas = TRUE)
-```
-
-
-```{r}
-suggest_size(cvvs_loo_s5, stat = "mlpd")
-```
-
-### cv run summary
-```{r}
-smmry <- summary(cvvs_loo_s5, stats = "mlpd", type = c("mean", "lower", "upper"),
-                 deltas = TRUE)
-print(smmry, digits = 1)
-```
-
-### variable selection
-```{r}
-# predictor rankings
-rk_s5 <- ranking(cvvs_loo_s5)
-```
-
-
-```{r}
-# ranking proportions
-pr_rk_s5 <- cv_proportions(rk_s5)
+yrep <- posterior_predict(refm_default_fit_s5_small_r1, draws = 50)
+ppc_dens_overlay(data_s5_small_r1$y, yrep)
 ```
 
 ```{r}
-rk_s5[["fulldata"]]
+refm_default_obj_s5_small_r1 <- get_refmodel(refm_default_fit_s5_small_r1)
 ```
 
-```{r}
-plot(pr_rk_s5)
-```
+
 
 ```{r}
-plot(cv_proportions(rk_s5, cumulate = TRUE))
-```
-```{r}
-predictors_final <- head(rk_s5[["fulldata"]], 18)
-```
+start.time <- Sys.time()
 
-### projection
-```{r}
-# final submodel once again
-prj_s5 <- project(
-  refm_obj_s5,
-  predictor_terms = predictors_final,
+cvvs_5fold_s5_small_r1_default_refm <- cv_varsel(
+  refm_default_obj_s5_small_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
   verbose = FALSE
 )
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
 ```
 
 ```{r}
-prj_mat_s5 <- as.matrix(prj_s5)
+plot(cvvs_5fold_s5_small_r1_default_refm, stats = "mlpd", deltas = TRUE)
 ```
 
+
+### small n replication 2
 ```{r}
-prj_drws_s5 <- as_draws_matrix(prj_mat_s5)
-prj_smmry_s5 <- summarize_draws(
-  prj_drws_s5,
-  "median", "mad", function(x) quantile(x, probs = c(0.025, 0.975))
+# read in the data and take a look
+data_s5_small_r2 <- load_filter_standardize_data("p50/sim_p50_t10_corr0.8_mixed.csv", sample_size = 100, replication = 2)
+
+head(data_s5_small_r2)
+```
+
+
+#### reference model
+```{r}
+start.time <- Sys.time()
+
+refm_fit_s5_small_r2 <- brm(
+  formula = y ~ ., 
+  data = data_s5_small_r2,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
 )
 
-prj_smmry_s5 <- as.data.frame(prj_smmry_s5)
-print(prj_smmry_s5, digits = 1)
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
 ```
 
-### confusion matrix
 
 ```{r}
+yrep <- posterior_predict(refm_fit_s5_small_r2, draws = 50)
+ppc_dens_overlay(data_s5_small_r2$y, yrep)
+```
+
+
+#### final cv_varsel() run kfold
+```{r}
+refm_obj_s5_small_r2 <- get_refmodel(refm_fit_s5_small_r2)
+```
+
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_5fold_s5_small_r2 <- cv_varsel(
+  refm_obj_s5_small_r2,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_5fold_s5_small_r2, stats = "mlpd", deltas = TRUE)
+```
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_10fold_s5_small_r2 <- cv_varsel(
+  refm_obj_s5_small_r2,
+  cv_method = "kfold",
+  K = 10,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_10fold_s5_small_r2, stats = "mlpd", deltas = TRUE)
+```
+
+#### confusion matrix
+```{r}
+# cross_validation list
+cv_results_list <- list(
+  "2-fold" = cvvs_2fold_s5_small_r1,
+  "5-fold" = cvvs_5fold_s5_small_r1,
+  "10-fold" = cvvs_10fold_s5_small_r1
+)
+
+# Define true predictors
 true_predictors <- paste0("X", seq(1, 50, 5))
-predictors_final <- head(rk_s5[["fulldata"]], 18)
 
-confusion_matrix <- calculate_inclusion_metrics(predictors_final, true_predictors)
-print(confusion_matrix)
+# Run the function and get the analysis results
+generate_analysis_results(cv_results_list, true_predictors, custom_size = 10)
 ```
+
+## large n
+### large n replication 1
+```{r}
+# read in the data and take a look
+data_s5_large_r1 <- load_filter_standardize_data("p50/sim_p50_t10_corr0.8_mixed.csv", sample_size = 400, replication = 1)
+
+head(data_s5_large_r1)
+```
+
+
+#### reference model
+```{r}
+start.time <- Sys.time()
+
+refm_fit_s5_large_r1 <- brm(
+  formula = y ~ ., 
+  data = data_s5_large_r1,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = par_ratio), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  refresh = 0
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+yrep <- posterior_predict(refm_fit_s5_large_r1, draws = 50)
+ppc_dens_overlay(data_s5_large_r1$y, yrep)
+```
+
+
+#### final cv_varsel() run kfold
+```{r}
+refm_obj_s5_large_r1 <- get_refmodel(refm_fit_s5_large_r1)
+```
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_2fold_s5_large_r1 <- cv_varsel(
+  refm_obj_s5_large_r1,
+  cv_method = "kfold",
+  K = 2,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_2fold_s5_large_r1, stats = "mlpd", deltas = TRUE)
+```
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_5fold_s5_large_r1 <- cv_varsel(
+  refm_obj_s5_large_r1,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_5fold_s5_large_r1, stats = "mlpd", deltas = TRUE)
+```
+
+
+
+```{r}
+start.time <- Sys.time()
+
+cvvs_10fold_s5_large_r1 <- cv_varsel(
+  refm_obj_s5_large_r1,
+  cv_method = "kfold",
+  K = 10,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+```{r}
+plot(cvvs_10fold_s5_large_r1, stats = "mlpd", deltas = TRUE)
+```
+
+
+
+
 
 
 
