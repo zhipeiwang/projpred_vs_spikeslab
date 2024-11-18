@@ -1,0 +1,325 @@
+---
+title: "workflow_functions"
+format: html
+editor: visual
+---
+
+# separate functions for the analysis pipeline
+
+## load, filter and standardize data
+```{r}
+load_and_prepare_data <- function(file_path, sample_size, replication) {
+  data <- fread(file_path)[N == sample_size & r == replication]
+  data <- as.data.frame(data) %>% select(-V1, -N, -r)  # Adjust 'V1' as needed based on the data loading method
+  data[ , -1] <- scale(data[ , -1])  # Standardize all columns except dependent variable 'y'
+  return(data)
+}
+```
+
+## fit the reference model and save for projpred
+```{r}
+fit_reference_model <- function(data, seed = 123) {
+  refm_fit <- brm(
+    formula = y ~ .,
+    data = data,
+    family = gaussian(),
+    prior = prior(horseshoe(par_ratio = 0.1), class = "b"),
+    chains = 4,
+    iter = 2000,
+    seed = seed,
+    backend = "cmdstanr"
+  )
+  refm_obj <- get_refmodel(refm_fit)
+  return(list(refm_fit = refm_fit, refm_obj = refm_obj))
+}
+```
+
+
+## run cross-validation for variable selection
+```{r}
+run_cross_validation <- function(refm_obj, k_values, max_terms = 11, seed = 123) {
+  cv_results <- list()
+  for (K in k_values) {
+    cv_name <- paste0(K, "-fold")
+    cv_results[[cv_name]] <- cv_varsel(
+      refm_obj,
+      cv_method = "kfold",
+      K = K,
+      method = "forward",
+      nclusters = 20,
+      ndraws_pred = 400,
+      nterms_max = max_terms,
+      seed = seed,
+      verbose = FALSE
+    )
+  }
+  return(cv_results)
+}
+
+```
+
+
+## get final predictors
+```{r}
+get_final_predictors <- function(cv_result, custom_size = NULL) {
+  # Generate the ranking for the cv_result
+  ranking_result <- ranking(cv_result)
+  
+  # Determine the size: either suggested or user-specified
+  if (is.null(custom_size)) {
+    suggested_size <- suggest_size(cv_result, stat = "mlpd")
+  } else {
+    suggested_size <- custom_size
+  }
+  
+  # Get the final selected predictors based on the size
+  final_predictors <- head(ranking_result[["fulldata"]], suggested_size)
+  
+  return(final_predictors)
+}
+```
+
+
+## calculate confusion matrix and inclusion/exclusion rates
+```{r}
+calculate_inclusion_metrics <- function(selected_predictors, file_path, total_predictors = 50) {
+  # Define true predictors based on the file path
+  true_predictors <- if (grepl("mixed\\.csv$", file_path)) {
+    paste0("X", seq(1, 50, 5))
+  } else {
+    paste0("X", 1:10)
+  }
+  
+  # Calculate the number of predictors
+  true_inclusion <- sum(selected_predictors %in% true_predictors)                    # Correctly included
+  false_inclusion <- sum(!(selected_predictors %in% true_predictors))                # Incorrectly included
+  false_exclusion <- sum(true_predictors %in% true_predictors & 
+                         !(true_predictors %in% selected_predictors))                # Incorrectly excluded
+  true_exclusion <- total_predictors - true_inclusion - false_inclusion - false_exclusion  # Correctly excluded
+
+  # Calculate rates
+  true_inclusion_rate <- true_inclusion / length(true_predictors)                    # Proportion of true predictors correctly included
+  false_inclusion_rate <- false_inclusion / (total_predictors - length(true_predictors))  # Proportion of irrelevant predictors incorrectly included
+  true_exclusion_rate <- true_exclusion / (total_predictors - length(true_predictors))    # Proportion of irrelevant predictors correctly excluded
+  false_exclusion_rate <- false_exclusion / length(true_predictors)                  # Proportion of true predictors incorrectly excluded
+
+  # Construct the confusion matrix
+  confusion_matrix <- matrix(
+    c(true_inclusion, false_exclusion, false_inclusion, true_exclusion),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list("Actual" = c("Non-zero", "Zero"), "Predicted" = c("Included", "Excluded"))
+  )
+
+  return(list(
+    confusion_matrix = confusion_matrix,
+    true_inclusion_rate = true_inclusion_rate,
+    false_inclusion_rate = false_inclusion_rate,
+    true_exclusion_rate = true_exclusion_rate,
+    false_exclusion_rate = false_exclusion_rate
+  ))
+}
+
+```
+
+## analyze cross-validation results
+```{r}
+analyze_cv_results <- function(cv_results, file_path, custom_size = NULL) {
+  final_predictors_list <- list()
+  confusion_matrices <- list()
+  inclusion_metrics <- list()
+  
+  for (cv_name in names(cv_results)) {
+    # Get the final selected predictors
+    final_predictors <- get_final_predictors(cv_results[[cv_name]], custom_size)
+    final_predictors_list[[cv_name]] <- final_predictors
+    
+    # Calculate inclusion metrics
+    metrics_result <- calculate_inclusion_metrics(selected_predictors = final_predictors, file_path = file_path)
+    confusion_matrices[[cv_name]] <- metrics_result$confusion_matrix
+    inclusion_metrics[[cv_name]] <- metrics_result[-1]  # Save rates excluding the confusion matrix
+  }
+  
+  return(list(
+    final_predictors = final_predictors_list,
+    confusion_matrices = confusion_matrices,
+    inclusion_metrics = inclusion_metrics
+  ))
+}
+```
+
+
+# run the analysis pipeline one step at a time
+```{r}
+data_s1_small_r1 <- load_and_prepare_data("p50/sim_p50_t10.csv", sample_size = 100, replication = 1)
+```
+
+```{r}
+refm_s1_small_r1 <- fit_reference_model(data_s1_small_r1)
+```
+
+
+```{r}
+# yrep <- posterior_predict(refm_s1_small_r1$refm_fit, draws = 50)
+# ppc_dens_overlay(data_s1_small_r1$y, yrep)
+```
+
+
+```{r}
+cv_results_s1_small_r1 <- run_cross_validation(refm_s1_small_r1$refm_obj, k_values = c(5))
+```
+
+
+
+```{r}
+cv_analysis_s1_small_r1 <- analyze_cv_results(cv_results_s1_small_r1, 'p50/sim_p50_t10.csv')
+```
+
+
+```{r}
+cv_analysis_s1_small_r1$confusion_matrices
+```
+
+# the comprehensive function
+```{r}
+run_analysis_pipeline <- function(file_path, sample_size, replication, max_terms = 11, custom_size = NULL, k_values = c(2, 5, 10), seed = 123) {
+  # start timing
+  start.time <- Sys.time()
+  
+  # Step 1: Load and prepare the data
+  data <- load_and_prepare_data(file_path, sample_size, replication)
+  
+  # Step 2: Fit the reference model and get the projpred reference object
+  refm_results <- fit_reference_model(data)
+  refm_fit <- refm_results$refm_fit
+  refm_obj <- refm_results$refm_obj
+  
+  # Step 3: Run cross-validation for variable selection with specified K values
+  cv_results <- run_cross_validation(refm_obj, k_values, max_terms)
+  
+  # Step 4: Analyze cross-validation results
+  analysis_results <- analyze_cv_results(cv_results, file_path, custom_size)
+  
+  # end timing and print the time taken
+  end.time <- Sys.time()
+  time.taken <- round(end.time - start.time,2)
+  time.unit <- attr(time.taken, "units")
+  cat("Time taken to run the pipeline:", time.taken, time.unit, "\n")
+  
+  # Return all results
+  return(list(
+    refm_fit = refm_fit,
+    refm_obj = refm_obj,
+    cv_results = cv_results,
+    final_predictors = analysis_results$final_predictors,
+    confusion_matrices = analysis_results$confusion_matrices,
+    inclusion_metrics = analysis_results$inclusion_metrics,
+    time_taken = time.taken
+  ))
+}
+```
+
+
+# run the comprehensive function
+
+```{r}
+ppvs_s1_small_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10.csv", sample_size = 100, replication = 1, k_values = c(5))
+```
+
+
+```{r}
+ppvs_s1_small_r1_10fold <- run_analysis_pipeline("p50/sim_p50_t10.csv", sample_size = 100, replication = 1, k_values = c(10))
+```
+
+
+```{r}
+ppvs_s1_large_r1_2fold <- run_analysis_pipeline("p50/sim_p50_t10.csv", sample_size = 400, replication = 1, k_values = c(2))
+```
+
+
+```{r}
+ppvs_s1_large_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10.csv", sample_size = 400, replication = 1, k_values = c(5))
+```
+
+
+```{r}
+ppvs_s2_small_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_first10.csv", sample_size = 100, replication = 1, k_values = c(5))
+```
+
+
+```{r}
+ppvs_s2_small_r1_10fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_first10.csv", sample_size = 100, replication = 1, k_values = c(10))
+```
+
+
+```{r}
+ppvs_s2_large_r1_2fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_first10.csv", sample_size = 400, replication = 1, k_values = c(2))
+```
+
+
+```{r}
+ppvs_s2_large_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_first10.csv", sample_size = 400, replication = 1, k_values = c(5))
+```
+
+
+```{r}
+ppvs_s3_small_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_mixed.csv", sample_size = 100, replication = 1, k_values = c(5))
+```
+
+
+```{r}
+ppvs_s3_small_r1_10fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_mixed.csv", sample_size = 100, replication = 1, k_values = c(10))
+```
+
+
+```{r}
+ppvs_s3_large_r1_2fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_mixed.csv", sample_size = 400, replication = 1, k_values = c(2))
+```
+
+
+```{r}
+ppvs_s3_large_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_mixed.csv", sample_size = 400, replication = 1, k_values = c(5))
+```
+
+
+```{r}
+ppvs_s4_small_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_first10.csv", sample_size = 100, replication = 1, k_values = c(5))
+```
+
+```{r}
+ppvs_s4_small_r1_10fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_first10.csv", sample_size = 100, replication = 1, k_values = c(10))
+```
+
+
+```{r}
+ppvs_s4_large_r1_2fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_first10.csv", sample_size = 400, replication = 1, k_values = c(2))
+```
+
+
+```{r}
+ppvs_s4_large_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_first10.csv", sample_size = 400, replication = 1, k_values = c(5))
+```
+
+
+```{r}
+ppvs_s5_small_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_mixed.csv", sample_size = 100, replication = 1, k_values = c(5))
+```
+
+
+```{r}
+ppvs_s5_small_r1_10fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_mixed.csv", sample_size = 100, replication = 1, k_values = c(10))
+```
+
+
+```{r}
+ppvs_s5_large_r1_2fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_mixed.csv", sample_size = 400, replication = 1, k_values = c(2))
+```
+
+
+```{r}
+ppvs_s5_large_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_mixed.csv", sample_size = 400, replication = 1, k_values = c(5))
+```
+
+
+
+

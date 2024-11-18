@@ -95,6 +95,8 @@ par_ratio <- p0 / D
 par_ratio
 ```
 
+
+
 #### reference model
 ```{r}
 #| chache: 
