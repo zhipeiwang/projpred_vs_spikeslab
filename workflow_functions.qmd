@@ -23,37 +23,46 @@ fit_reference_model <- function(data, seed = 123) {
     formula = y ~ .,
     data = data,
     family = gaussian(),
-    prior = prior(horseshoe(par_ratio = 0.1), class = "b"),
+    prior = prior(horseshoe(par_ratio = 0.2), class = "b"),
     chains = 4,
     iter = 2000,
     seed = seed,
     backend = "cmdstanr"
   )
-  refm_obj <- get_refmodel(refm_fit)
-  return(list(refm_fit = refm_fit, refm_obj = refm_obj))
+  return(refm_fit)
 }
 ```
 
 
 ## run cross-validation for variable selection
 ```{r}
-run_cross_validation <- function(refm_obj, k_values, max_terms = 11, seed = 123) {
-  cv_results <- list()
-  for (K in k_values) {
-    cv_name <- paste0(K, "-fold")
-    cv_results[[cv_name]] <- cv_varsel(
-      refm_obj,
-      cv_method = "kfold",
-      K = K,
-      method = "forward",
-      nclusters = 20,
-      ndraws_pred = 400,
-      nterms_max = max_terms,
-      seed = seed,
-      verbose = FALSE
+run_projpred <- function(refm_fit, K, nterms_max = 11, seed = 123) {
+  
+  refm_obj <- get_refmodel(refm_fit)
+  
+  cvvs <- cv_varsel(
+    refm_obj,
+    cv_method = "kfold",
+    K = K,
+    method = "forward",
+    nclusters = 20,
+    ndraws_pred = 400,
+    nterms_max = nterms_max,
+    seed = seed,
+    verbose = FALSE
     )
-  }
-  return(cv_results)
+  
+  suggested_size <- suggest_size(cvvs, stat = "mlpd")
+  ranking <- ranking(cvvs)
+  summary_cvvs <- summary(cvvs)
+  
+  output_projpred <- list(
+    suggested_size = suggested_size,
+    ranking_result = ranking_result,
+    summary_cvvs = summary_cvvs
+  )
+  
+  return(output_projpred)
 }
 
 ```
