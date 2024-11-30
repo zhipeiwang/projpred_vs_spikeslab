@@ -60,9 +60,9 @@ workflow_fun <- function(pos, conditions){
   # run projection predictive variable selection
   ppvs_out <- run_projpred(refm_fit, K = K, nterms_max = 11)
   
-  # Handle failed suggest_size
-  if (is.na(ppvs_out$suggested_size)) {
-    cat("Skipping remaining steps for", name, "due to suggest_size failure.\n")
+  # Check if any heuristic failed
+  if (any(is.na(ppvs_out$suggested_sizes))) {
+    cat("Skipping remaining steps for", name, "due to suggest_size failures.\n")
     # Save the failed cvvs object
     cvvs_out <- ppvs_out$cvvs
     save(cvvs_out, file = paste0("output/cvvs4suggest_size_failed/cvvs_", name, ".RData"))
@@ -74,10 +74,15 @@ workflow_fun <- function(pos, conditions){
   
   # Proceed only if suggest_size succeeds
   # add selection based on projpred to reference model summary
-  selected_pred_ppvs <- head(ppvs_out$ranking[["fulldata"]], ppvs_out$suggested_size)
-  df_out = summ_ref$fixed
-  df_out$selected_pred_ppvs = 0
-  df_out$selected_pred_ppvs[which(rownames(df_out) %in% selected_pred_ppvs)] = 1
+  # Create and modify df_out for each heuristic
+  df_out <- summ_ref$fixed
+  for (heuristic in names(ppvs_out$suggested_sizes)) {
+    suggested_size <- ppvs_out$suggested_sizes[[heuristic]]
+    selected_pred_ppvs <- head(ppvs_out$ranking[["fulldata"]], suggested_size)
+    df_out[[paste0("selected_pred_ppvs_", heuristic)]] <- 0
+    df_out[[paste0("selected_pred_ppvs_", heuristic)]][which(rownames(df_out) %in% selected_pred_ppvs)] <- 1
+  }
+  
   
   # save outputs
   save(ppvs_out, file = paste0("output/ppvs_out/ppvs_out_", name, ".RData"))
@@ -133,6 +138,7 @@ if (is.na(output_s1_small_r415$suggested_size)) {
 }
 
 
+load("output/cvvs4suggest_size_failed/cvvs_data_s1_small_r415.RData")
 load("output/cvvs4suggest_size_failed/cvvs_N100_corr0_loc_TEfirst10_r415.RData")
 
 

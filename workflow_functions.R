@@ -78,19 +78,42 @@ run_projpred <- function(refm_fit, K, nterms_max = 11, seed = 123) {
     seed = seed
   )
   
+  
   # Try to suggest size
-  suggested_size <- tryCatch({
-    suggest_size(cvvs, stat = "mlpd")
-  }, error = function(e) {
-    cat("Error in suggest_size:", e$message, "\n")
-    return(NA)  # Return NA for suggested_size
-  })
+  # Compute various suggest_size heuristics
+  suggested_sizes <- list(
+    default = tryCatch({
+      suggest_size(cvvs, type = "upper")
+    }, error = function(e) {
+      cat("Error in suggest_size (default):", e$message, "\n")
+      return(NA)
+    }),
+    lower = tryCatch({
+      suggest_size(cvvs, type = "lower")
+    }, error = function(e) {
+      cat("Error in suggest_size (lower):", e$message, "\n")
+      return(NA)
+    }),
+    thres_upper = tryCatch({
+      suggest_size(cvvs, thres_elpd = -4, type = "upper")
+    }, error = function(e) {
+      cat("Error in suggest_size (thres_upper):", e$message, "\n")
+      return(NA)
+    }),
+    thres_lower = tryCatch({
+      suggest_size(cvvs, thres_elpd = -4, type = "lower")
+    }, error = function(e) {
+      cat("Error in suggest_size (thres_lower):", e$message, "\n")
+      return(NA)
+    })
+  )
+  
   
   ranking <- ranking(cvvs)
   summary_cvvs <- summary(cvvs)
   
   output_projpred <- list(
-    suggested_size = suggested_size,
+    suggested_sizes = suggested_sizes,
     ranking = ranking,
     summary_cvvs = summary_cvvs,
     cvvs = cvvs
