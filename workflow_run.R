@@ -23,7 +23,7 @@ r <- sample(1:500, size = 100, replace = FALSE)  # Randomly sample 100 values fr
 
 conditions <- expand.grid(N = N, corr = corr, loc_TE = loc_TE, r = r)
 conditions$K <- ifelse(conditions$N == 100, 5, 2)
-conditions <- conditions %>% 
+conditions <- conditions %>%
   filter(!(corr == 0 & loc_TE == "mixed"))
 
 #### Part 2: Set up workflow function -----
@@ -60,14 +60,27 @@ workflow_fun <- function(pos, conditions){
   # run projection predictive variable selection
   ppvs_out <- run_projpred(refm_fit, K = K, nterms_max = 11)
   
-  save(ppvs_out, file = paste0("output/ppvs_out/ppvs_out_", name, ".RData"))
+  # Handle failed suggest_size
+  if (is.na(ppvs_out$suggested_size)) {
+    cat("Skipping remaining steps for", name, "due to suggest_size failure.\n")
+    # Save the failed cvvs object
+    cvvs_out <- ppvs_out$cvvs
+    save(cvvs_out, file = paste0("output/cvvs4suggest_size_failed/cvvs_", name, ".RData"))
+    return(NULL)  # Exit early for this replication
+  }
   
+  # If suggest_size succeeded, remove the cvvs object from ppvs_out
+  ppvs_out$cvvs <- NULL
+  
+  # Proceed only if suggest_size succeeds
   # add selection based on projpred to reference model summary
   selected_pred_ppvs <- head(ppvs_out$ranking[["fulldata"]], ppvs_out$suggested_size)
   df_out = summ_ref$fixed
   df_out$selected_pred_ppvs = 0
   df_out$selected_pred_ppvs[which(rownames(df_out) %in% selected_pred_ppvs)] = 1
   
+  # save outputs
+  save(ppvs_out, file = paste0("output/ppvs_out/ppvs_out_", name, ".RData"))
   save(df_out, file = paste0("output/df_out/df_out_", name, ".RData"))
 }
 
@@ -106,17 +119,21 @@ stopCluster(cl)
 
 system.time(workflow_fun(3, conditions))
 
-load("output/ppvs_out/ppvs_out_N100_corr0_loc_TEfirst10_r463.RData")
+load("output/ppvs_out/ppvs_out_N100_corr0_loc_TEfirst10_r415.RData")
+load("output/df_out/df_out_N100_corr0_loc_TEfirst10_r415.RData")
+
+data_s1_small_r415 <- load_and_prepare_data(file_path = NULL, sample_size = 100, replication = 415, corr = 0, loc_TE = "first10")
+refm_fit_s1_small_r415 <- fit_reference_model(data_s1_small_r415)
+output_s1_small_r415 <- run_projpred(refm_fit_s1_small_r415, K = 5, nterms_max = 11)
+cvvs_s1_small_r415 <- output_s1_small_r415$cvvs
 
 
+if (is.na(output_s1_small_r415$suggested_size)) {
+  save(cvvs_s1_small_r415, file = paste0("output/cvvs4suggest_size_failed/cvvs_", "data_s1_small_r415", ".RData"))
+}
 
 
-
-
-
-
-
-
+load("output/cvvs4suggest_size_failed/cvvs_N100_corr0_loc_TEfirst10_r415.RData")
 
 
 

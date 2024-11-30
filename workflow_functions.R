@@ -78,14 +78,22 @@ run_projpred <- function(refm_fit, K, nterms_max = 11, seed = 123) {
     seed = seed
   )
   
-  suggested_size <- suggest_size(cvvs, stat = "mlpd")
+  # Try to suggest size
+  suggested_size <- tryCatch({
+    suggest_size(cvvs, stat = "mlpd")
+  }, error = function(e) {
+    cat("Error in suggest_size:", e$message, "\n")
+    return(NA)  # Return NA for suggested_size
+  })
+  
   ranking <- ranking(cvvs)
   summary_cvvs <- summary(cvvs)
   
   output_projpred <- list(
     suggested_size = suggested_size,
     ranking = ranking,
-    summary_cvvs = summary_cvvs
+    summary_cvvs = summary_cvvs,
+    cvvs = cvvs
   )
   
   return(output_projpred)
