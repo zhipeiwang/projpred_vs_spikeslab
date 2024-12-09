@@ -1,0 +1,574 @@
+---
+title: "summAndplot_try"
+author: "Zhipei Wang"
+date: "2024-12-08"
+output: html_document
+---
+# ppvs
+```{r}
+compute_rates <- function(df_out, true_predictors, heuristic_columns) {
+  # Exclude the intercept row
+  df_out <- df_out[rownames(df_out) != "Intercept", , drop = FALSE]
+  
+  # Initialize a named vector to store all rates
+  rates_vector <- c()
+  
+  for (heuristic in heuristic_columns) {
+    if (all(is.na(df_out[[heuristic]]))) {
+      # Assign NA to all rates for this heuristic
+      rates <- c(
+        true_inclusion = NA,
+        false_inclusion = NA,
+        true_exclusion = NA,
+        false_exclusion = NA
+      )
+    } else {
+      # Get selected predictors
+      selected_predictors <- rownames(df_out)[df_out[[heuristic]] == 1]
+      
+      # Compute rates
+      true_inclusion <- sum(selected_predictors %in% true_predictors) / length(true_predictors)
+      false_inclusion <- sum(!(selected_predictors %in% true_predictors)) / (nrow(df_out) - length(true_predictors))
+      false_exclusion <- sum(!(true_predictors %in% selected_predictors)) / length(true_predictors)
+      true_exclusion <- {irrelevant_predictors <- rownames(df_out)[!(rownames(df_out) %in% true_predictors)]
+      excluded_irrelevant_predictors <- irrelevant_predictors[!(irrelevant_predictors %in% selected_predictors)]
+      length(excluded_irrelevant_predictors) / length(irrelevant_predictors)
+      }
+
+      
+      rates <- c(
+        true_inclusion = true_inclusion,
+        false_inclusion = false_inclusion,
+        true_exclusion = true_exclusion,
+        false_exclusion = false_exclusion
+      )
+    }
+    # Prefix rate names with the heuristic
+    names(rates) <- paste(heuristic, names(rates), sep = "_")
+    # Combine rates into the rates_vector
+    rates_vector <- c(rates_vector, rates)
+  }
+  
+  # Convert rates_vector to a data frame with one row
+  rates_df <- as.data.frame(t(rates_vector), stringsAsFactors = FALSE)
+  return(rates_df)
+}
+
+
+```
+
+
+
+## loc_TE = "first10"
+```{r}
+# List all files in the df_out folder
+df_out_files <- list.files("output/df_out/", full.names = TRUE, pattern = "\\.RData$")
+
+# Filter files with loc_TE = "first10"
+files_first10 <- df_out_files[grepl("_loc_TEfirst10_", df_out_files)]
+
+# the true predictors for first10
+true_predictors <- paste0("X", 1:10)
+
+# Compute final results
+final_results <- do.call(rbind, lapply(files_first10, function(file_path) {
+  load(file_path)
+  # Process df_out and compute rates
+  heuristic_columns <- grep("^selected_pred_ppvs_", colnames(df_out), value = TRUE)
+  rates <- compute_rates(df_out, true_predictors, heuristic_columns)
+  
+  # Extract conditions from the filename
+  conditions <- str_match(file_path, "df_out_N(\\d+)_corr([\\d\\.]+)_loc_TE([a-zA-Z0-9]+)_r(\\d+)\\.RData")
+  condition_df <- data.frame(
+    N = as.numeric(conditions[, 2]),
+    corr = as.numeric(conditions[, 3]),
+    loc_TE = conditions[, 4],
+    r = as.numeric(conditions[, 5])
+  )
+  
+  # Combine conditions with rates
+  cbind(condition_df, rates)
+}))
+
+# Rename columns to remove "selected_pred_ppvs_" prefix
+colnames(final_results) <- gsub("^selected_pred_ppvs_", "", colnames(final_results))
+
+
+# View updated results
+head(final_results)
+
+```
+
+```{r}
+colSums(is.na(final_results))
+```
+
+
+
+```{r}
+# Identify heuristic columns for the rates
+heuristic_rate_columns <- grep("_true_inclusion|false_inclusion|true_exclusion|false_exclusion$", 
+                               colnames(final_results), value = TRUE)
+
+# Extract unique heuristic prefixes (e.g., "default", "lower", "thres_upper", "thres_lower")
+heuristic_prefixes <- unique(gsub("_(true_inclusion|false_inclusion|true_exclusion|false_exclusion)$", "", 
+                                  heuristic_rate_columns))
+
+# Compute the means for each heuristic
+mean_table_list <- lapply(heuristic_prefixes, function(prefix) {
+  cols <- grep(paste0("^", prefix, "_"), heuristic_rate_columns, value = TRUE)
+  colMeans(final_results[, cols, drop = FALSE], na.rm = TRUE)
+})
+
+# Combine the list into a matrix
+mean_table <- do.call(cbind, mean_table_list)
+
+# Assign proper row and column names
+rownames(mean_table) <- c("True Inclusion", "False Inclusion", "True Exclusion", "False Exclusion")
+colnames(mean_table) <- heuristic_prefixes
+
+# Print the mean table
+mean_table <- round(mean_table, 4)
+print(mean_table)
+```
+
+
+## loc_TE = "mixed"
+
+```{r}
+# List all files in the df_out folder
+df_out_files <- list.files("output/df_out/", full.names = TRUE, pattern = "\\.RData$")
+
+# Filter files with loc_TE = "first10"
+files_mixed <- df_out_files[grepl("_loc_TEmixed_", df_out_files)]
+
+# the true predictors for mixed
+true_predictors_mixed <- paste0("X", seq(1, 50, 5))
+
+# Compute final results
+final_results_mixed <- do.call(rbind, lapply(files_mixed, function(file_path) {
+  load(file_path)
+  # Process df_out and compute rates
+  heuristic_columns <- grep("^selected_pred_ppvs_", colnames(df_out), value = TRUE)
+  rates <- compute_rates(df_out, true_predictors_mixed, heuristic_columns)
+  
+  # Extract conditions from the filename
+  conditions <- str_match(file_path, "df_out_N(\\d+)_corr([\\d\\.]+)_loc_TE([a-zA-Z0-9]+)_r(\\d+)\\.RData")
+  condition_df <- data.frame(
+    N = as.numeric(conditions[, 2]),
+    corr = as.numeric(conditions[, 3]),
+    loc_TE = conditions[, 4],
+    r = as.numeric(conditions[, 5])
+  )
+  
+  # Combine conditions with rates
+  cbind(condition_df, rates)
+}))
+
+# Rename columns to remove "selected_pred_ppvs_" prefix
+colnames(final_results_mixed) <- gsub("^selected_pred_ppvs_", "", colnames(final_results_mixed))
+
+
+# View updated results
+head(final_results_mixed)
+```
+
+```{r}
+colSums(is.na(final_results_mixed))
+```
+
+```{r}
+# Identify heuristic columns for the rates
+heuristic_rate_columns_mixed <- grep("_true_inclusion|false_inclusion|true_exclusion|false_exclusion$", 
+                               colnames(final_results), value = TRUE)
+
+# Extract unique heuristic prefixes (e.g., "default", "lower", "thres_upper", "thres_lower")
+heuristic_prefixes <- unique(gsub("_(true_inclusion|false_inclusion|true_exclusion|false_exclusion)$", "", 
+                                  heuristic_rate_columns))
+
+# Compute the means for each heuristic
+mean_table_list_mixed <- lapply(heuristic_prefixes, function(prefix) {
+  cols <- grep(paste0("^", prefix, "_"), heuristic_rate_columns, value = TRUE)
+  colMeans(final_results_mixed[, cols, drop = FALSE], na.rm = TRUE)
+})
+
+# Combine the list into a matrix
+mean_table_mixed <- do.call(cbind, mean_table_list_mixed)
+
+# Assign proper row and column names
+rownames(mean_table_mixed) <- c("True Inclusion", "False Inclusion", "True Exclusion", "False Exclusion")
+colnames(mean_table_mixed) <- heuristic_prefixes
+
+# Print the mean table
+mean_table_mixed <- round(mean_table_mixed, 4)
+print(mean_table_mixed)
+```
+
+
+### ppvs by category
+```{r}
+# Process all PPVS files and compute rates
+final_results_ppvs_cat <- do.call(rbind, lapply(files_first10, function(file) {
+  load(file) # Load the df_out object
+
+  # Remove the intercept row
+  df_out <- df_out[rownames(df_out) != "Intercept", ]
+
+  # Initialize a list to store rates for each effect size
+  rates <- lapply(names(effect_size_groups), function(group) {
+    predictors <- effect_size_groups[[group]]
+    
+    # Compute inclusion rates for all heuristics
+    inclusion_rates <- sapply(heuristic_columns, function(heuristic) {
+      selected <- df_out[[heuristic]][rownames(df_out) %in% predictors]
+      
+      # Check if the column is entirely NA
+      if (all(is.na(df_out[[heuristic]]))) {
+        return(NA)  # Entirely NA column; return NA
+      }
+      
+      # Compute inclusion rate
+      inclusion_rate <- sum(selected) / length(predictors)
+      return(inclusion_rate)
+    })
+    
+    # Return a data frame for the current effect size
+    data.frame(
+      effect_size = group,
+      t(inclusion_rates)
+    )
+  })
+  
+  # Combine all effect size rates into a single data frame
+  rates_df <- do.call(rbind, rates)
+
+  # Extract conditions from the filename
+  conditions <- str_match(file, "df_out_N(\\d+)_corr([\\d\\.]+)_loc_TE([a-zA-Z0-9]+)_r(\\d+)\\.RData")
+  condition_df <- data.frame(
+    N = as.numeric(conditions[, 2]),
+    corr = as.numeric(conditions[, 3]),
+    loc_TE = conditions[, 4],
+    r = as.numeric(conditions[, 5])
+  )
+  
+  # Combine conditions with rates
+  cbind(condition_df, rates_df)
+}))
+
+print(final_results_ppvs_cat)
+```
+
+```{r}
+mean_rates_ppvs_cat <- aggregate(
+  . ~ effect_size,
+  data = final_results_ppvs_cat[, -c(1:4)],
+  mean,
+  na.rm = TRUE
+)
+# Round all numeric columns to 4 decimal places
+mean_rates_ppvs_cat[, -1] <- round(mean_rates_ppvs_cat[, -1], 4)
+print(mean_rates_ppvs_cat)
+```
+
+
+```{r}
+# Process all PPVS files and compute rates
+final_results_ppvs_cat_uncorrTE <- do.call(rbind, lapply(files_mixed, function(file) {
+  load(file) # Load the df_out object
+
+  # Remove the intercept row
+  df_out <- df_out[rownames(df_out) != "Intercept", ]
+
+  # Initialize a list to store rates for each effect size
+  rates <- lapply(names(effect_size_groups_uncorrTE), function(group) {
+    predictors <- effect_size_groups_uncorrTE[[group]]
+    
+    # Compute inclusion rates for all heuristics
+    inclusion_rates <- sapply(heuristic_columns, function(heuristic) {
+      selected <- df_out[[heuristic]][rownames(df_out) %in% predictors]
+      
+      # Check if the column is entirely NA
+      if (all(is.na(df_out[[heuristic]]))) {
+        return(NA)  # Entirely NA column; return NA
+      }
+      
+      # Compute inclusion rate
+      inclusion_rate <- sum(selected) / length(predictors)
+      return(inclusion_rate)
+    })
+    
+    # Return a data frame for the current effect size
+    data.frame(
+      effect_size = group,
+      t(inclusion_rates)
+    )
+  })
+  
+  # Combine all effect size rates into a single data frame
+  rates_df <- do.call(rbind, rates)
+
+  # Extract conditions from the filename
+  conditions <- str_match(file, "df_out_N(\\d+)_corr([\\d\\.]+)_loc_TE([a-zA-Z0-9]+)_r(\\d+)\\.RData")
+  condition_df <- data.frame(
+    N = as.numeric(conditions[, 2]),
+    corr = as.numeric(conditions[, 3]),
+    loc_TE = conditions[, 4],
+    r = as.numeric(conditions[, 5])
+  )
+  
+  # Combine conditions with rates
+  cbind(condition_df, rates_df)
+}))
+
+print(final_results_ppvs_cat_uncorrTE)
+```
+
+```{r}
+mean_rates_ppvs_cat_uncorrTE <- aggregate(
+  . ~ effect_size,
+  data = final_results_ppvs_cat_uncorrTE[, -c(1:4)],
+  mean,
+  na.rm = TRUE
+)
+# Round all numeric columns to 4 decimal places
+mean_rates_ppvs_cat_uncorrTE[, -1] <- round(mean_rates_ppvs_cat_uncorrTE[, -1], 4)
+print(mean_rates_ppvs_cat_uncorrTE)
+```
+# ssvs
+
+## loc_TE = "first10"
+```{r}
+compute_ssvs_rates <- function(ssvs_df_out, true_predictors) {
+  selected_predictors <- ssvs_df_out$Variable[ssvs_df_out$selected_pred_ssvs == 1]
+  true_inclusion <- sum(selected_predictors %in% true_predictors) / length(true_predictors)
+  false_inclusion <- sum(!(selected_predictors %in% true_predictors)) / (nrow(ssvs_df_out) - length(true_predictors))
+  false_exclusion <- sum(!(true_predictors %in% selected_predictors)) / length(true_predictors)
+  true_exclusion <- sum(!(ssvs_df_out$Variable %in% selected_predictors) & !(ssvs_df_out$Variable %in% true_predictors)) / 
+    (nrow(ssvs_df_out) - length(true_predictors))
+  
+  return(c(true_inclusion = true_inclusion,
+           false_inclusion = false_inclusion,
+           true_exclusion = true_exclusion,
+           false_exclusion = false_exclusion))
+}
+
+```
+
+```{r}
+# List all SSVS files
+ssvs_files <- list.files("output/ssvs_df_out/", full.names = TRUE, pattern = "\\.RData$")
+
+# Filter files with loc_TE = "first10"
+ssvs_files_first10 <- ssvs_files[grepl("_loc_TEfirst10_", ssvs_files)]
+
+# Define true predictors
+true_predictors <- paste0("X", 1:10)
+
+# Compute final results
+final_results_ssvs <- do.call(rbind, lapply(ssvs_files_first10, function(file_path) {
+  load(file_path)  # Load the file; assumes it contains `ssvs_df_out`
+  
+  # Compute rates for SSVS
+  rates <- compute_ssvs_rates(ssvs_df_out, true_predictors)
+  rates <- as.data.frame(t(rates)) 
+  
+  # Extract conditions from the filename
+  conditions <- str_match(file_path, "ssvs_N(\\d+)_corr([\\d\\.]+)_loc_TE([a-zA-Z0-9]+)_r(\\d+)\\.RData")
+  condition_df <- data.frame(
+    N = as.numeric(conditions[, 2]),
+    corr = as.numeric(conditions[, 3]),
+    loc_TE = conditions[, 4],
+    r = as.numeric(conditions[, 5])
+  )
+  
+  # Combine conditions with rates
+  cbind(condition_df, rates)
+}))
+
+# View final results
+head(final_results_ssvs)
+
+```
+
+```{r}
+mean_rates_ssvs <- sapply(final_results_ssvs[, 5:8], mean)
+mean_rates_table_ssvs <- as.data.frame(t(mean_rates_ssvs))
+colnames(mean_rates_table_ssvs) <- c("True Inclusion", "False Inclusion", "True Exclusion", "False Exclusion")
+
+# Print mean rates
+print(mean_rates_table_ssvs)
+```
+
+## loc_TE = "mixed"
+```{r}
+# Filter files with loc_TE = "first10"
+ssvs_files_mixed <- ssvs_files[grepl("_loc_TEmixed_", ssvs_files)]
+
+# Define true predictors
+true_predictors_mixed <- paste0("X", seq(1, 50, 5))
+
+# Compute final results
+final_results_ssvs_mixed <- do.call(rbind, lapply(ssvs_files_mixed, function(file_path) {
+  load(file_path)  # Load the file; assumes it contains `ssvs_df_out`
+  
+  # Compute rates for SSVS
+  rates <- compute_ssvs_rates(ssvs_df_out, true_predictors_mixed)
+  rates <- as.data.frame(t(rates)) 
+  
+  # Extract conditions from the filename
+  conditions <- str_match(file_path, "ssvs_N(\\d+)_corr([\\d\\.]+)_loc_TE([a-zA-Z0-9]+)_r(\\d+)\\.RData")
+  condition_df <- data.frame(
+    N = as.numeric(conditions[, 2]),
+    corr = as.numeric(conditions[, 3]),
+    loc_TE = conditions[, 4],
+    r = as.numeric(conditions[, 5])
+  )
+  
+  # Combine conditions with rates
+  cbind(condition_df, rates)
+}))
+
+# View final results
+head(final_results_ssvs_mixed)
+```
+
+```{r}
+mean_rates_ssvs_mixed <- sapply(final_results_ssvs_mixed[, 5:8], mean)
+mean_rates_table_ssvs_mixed <- as.data.frame(t(mean_rates_ssvs_mixed))
+colnames(mean_rates_table_ssvs_mixed) <- c("True Inclusion", "False Inclusion", "True Exclusion", "False Exclusion")
+
+# Print mean rates
+print(mean_rates_table_ssvs_mixed)
+```
+
+### ssvs by category
+```{r}
+# Define effect size categories
+effect_size_groups <- list(
+  large_effect = c("X1", "X6"),
+  medium_effect = c("X2", "X3", "X7", "X8"),
+  small_effect = c("X4", "X5", "X9", "X10"),
+  null_effect = paste0("X", 11:50)
+)
+
+
+# Initialize an empty list to store results
+final_results_ssvs_cat <- do.call(rbind, lapply(ssvs_files_first10, function(file) {
+  load(file) # Load the ssvs_df_out object
+
+  # Compute inclusion rates for each effect size
+  rates <- lapply(names(effect_size_groups), function(group) {
+    predictors <- effect_size_groups[[group]]
+    selected <- ssvs_df_out$selected_pred_ssvs[ssvs_df_out$Variable %in% predictors]
+    
+    inclusion_rate <- sum(selected) / length(predictors)
+    
+    data.frame(
+      effect_size = group,
+      inclusion_rate = inclusion_rate
+    )
+  })
+  
+  rates_df <- do.call(rbind, rates)
+
+  # Extract conditions from the filename
+  conditions <- str_match(file, "ssvs_N(\\d+)_corr([\\d\\.]+)_loc_TE([a-zA-Z0-9]+)_r(\\d+)\\.RData")
+  condition_df <- data.frame(
+    N = as.numeric(conditions[, 2]),
+    corr = as.numeric(conditions[, 3]),
+    loc_TE = conditions[, 4],
+    r = as.numeric(conditions[, 5])
+  )
+
+  # Combine rates and conditions
+  rates_df <- cbind(condition_df, rates_df)
+  return(rates_df)
+}))
+
+print(final_results_ssvs_cat)
+```
+
+
+```{r}
+# Compute mean inclusion rates for each effect size
+mean_rates_ssvs_cat <- aggregate(
+  inclusion_rate ~ effect_size, 
+  data = final_results_ssvs_cat, 
+  mean
+)
+
+# Rename columns for clarity
+colnames(mean_rates_ssvs_cat) <- c("Effect Size", "Mean Inclusion Rate")
+
+# View results
+print(mean_rates_ssvs_cat)
+```
+
+
+```{r}
+# Define effect size categories
+effect_size_groups_uncorrTE <- list(
+  large_effect = c("X1", "X26"),
+  medium_effect = c("X6", "X11", "X31", "X36"),
+  small_effect = c("X16", "X21", "X41", "X46"),
+  null_effect = setdiff(paste0("X", 1:50), c("X1", "X6", "X11", "X16", "X21", "26", "X31", "X36", "X41", "X46"))
+)
+
+
+# Initialize an empty list to store results
+final_results_ssvs_cat_uncorrTE <- do.call(rbind, lapply(ssvs_files_mixed, function(file) {
+  load(file) # Load the ssvs_df_out object
+
+  # Compute inclusion rates for each effect size
+  rates <- lapply(names(effect_size_groups_uncorrTE), function(group) {
+    predictors <- effect_size_groups_uncorrTE[[group]]
+    selected <- ssvs_df_out$selected_pred_ssvs[ssvs_df_out$Variable %in% predictors]
+    
+    inclusion_rate <- sum(selected) / length(predictors)
+    
+    data.frame(
+      effect_size = group,
+      inclusion_rate = inclusion_rate
+    )
+  })
+  
+  rates_df <- do.call(rbind, rates)
+
+  # Extract conditions from the filename
+  conditions <- str_match(file, "ssvs_N(\\d+)_corr([\\d\\.]+)_loc_TE([a-zA-Z0-9]+)_r(\\d+)\\.RData")
+  condition_df <- data.frame(
+    N = as.numeric(conditions[, 2]),
+    corr = as.numeric(conditions[, 3]),
+    loc_TE = conditions[, 4],
+    r = as.numeric(conditions[, 5])
+  )
+
+  # Combine rates and conditions
+  rates_df <- cbind(condition_df, rates_df)
+  return(rates_df)
+}))
+
+print(final_results_ssvs_cat_uncorrTE)
+```
+
+
+```{r}
+# Compute mean inclusion rates for each effect size
+mean_rates_ssvs_cat_uncorrTE <- aggregate(
+  inclusion_rate ~ effect_size, 
+  data = final_results_ssvs_cat_uncorrTE, 
+  mean
+)
+
+# Rename columns for clarity
+colnames(mean_rates_ssvs_cat_uncorrTE) <- c("Effect Size", "Mean Inclusion Rate")
+
+# View results
+print(mean_rates_ssvs_cat_uncorrTE)
+```
+
+
+
+
+
+

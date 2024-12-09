@@ -14,8 +14,8 @@ set.seed(seed)
 
 #### Part 1: Set up conditions -----
 # Define the conditions grid
-N <- c(100, 400)
-corr <- c(0, 0.4, 0.8)
+N <- c(100)
+corr <- c(0.8)
 loc_TE <- c("first10", "mixed")
 # r <- 1:100
 r <- sample(1:500, size = 100, replace = FALSE)  # Randomly sample 100 values from 1:500
@@ -60,29 +60,36 @@ workflow_fun <- function(pos, conditions){
   # run projection predictive variable selection
   ppvs_out <- run_projpred(refm_fit, K = K, nterms_max = 11)
   
-  # Check if any heuristic failed
+  # Save `cvvs` if any heuristic failed
   if (any(is.na(ppvs_out$suggested_sizes))) {
-    cat("Skipping remaining steps for", name, "due to suggest_size failures.\n")
-    # Save the failed cvvs object
+    cat("Some suggest_size heuristics failed for", name, ".\n")
     cvvs_out <- ppvs_out$cvvs
     save(cvvs_out, file = paste0("output/cvvs4suggest_size_failed/cvvs_", name, ".RData"))
-    return(NULL)  # Exit early for this replication
   }
   
   # If suggest_size succeeded, remove the cvvs object from ppvs_out
   ppvs_out$cvvs <- NULL
   
-  # Proceed only if suggest_size succeeds
   # add selection based on projpred to reference model summary
-  # Create and modify df_out for each heuristic
+  # Proceed to create `df_out` even if some heuristics failed
   df_out <- summ_ref$fixed
   for (heuristic in names(ppvs_out$suggested_sizes)) {
     suggested_size <- ppvs_out$suggested_sizes[[heuristic]]
-    selected_pred_ppvs <- head(ppvs_out$ranking[["fulldata"]], suggested_size)
-    df_out[[paste0("selected_pred_ppvs_", heuristic)]] <- 0
-    df_out[[paste0("selected_pred_ppvs_", heuristic)]][which(rownames(df_out) %in% selected_pred_ppvs)] <- 1
+    if (is.na(suggested_size)) {
+      # If `suggest_size` failed, add a column with all `NA`
+      df_out[[paste0("selected_pred_ppvs_", heuristic)]] <- NA
+    } else {
+      # If `suggest_size` succeeded, populate the column
+      selected_pred_ppvs <- head(ppvs_out$ranking[["fulldata"]], suggested_size)
+      df_out[[paste0("selected_pred_ppvs_", heuristic)]] <- 0
+      df_out[[paste0("selected_pred_ppvs_", heuristic)]][rownames(df_out) %in% selected_pred_ppvs] <- 1
+    }
+    # Ensure the intercept is always selected
+    df_out[[paste0("selected_pred_ppvs_", heuristic)]][rownames(df_out) == "Intercept"] <- 1
   }
   
+  # Remove `cvvs` from `ppvs_out` to save memory
+  ppvs_out$cvvs <- NULL
   
   # save outputs
   save(ppvs_out, file = paste0("output/ppvs_out/ppvs_out_", name, ".RData"))
@@ -111,9 +118,10 @@ clusterExport(cl, varlist = c("conditions", "workflow_fun", "seed"),
               envir = environment())
 
 # Run the workflow in parallel
-test_conditions <- conditions[1:4, ]
+#test_conditions <- conditions[1:4, ]
 
-system.time(out <- clusterApplyLB(cl, 1:4, workflow_fun, conditions = test_conditions))
+missing_conditions <- conditions[conditions$r %in% c(82, 87, 220, 412, 477, 483, 496, 291), ]
+system.time(out <- clusterApplyLB(cl, 1:nrow(missing_conditions), workflow_fun, conditions = missing_conditions))
 
 # Stop the cluster after execution
 stopCluster(cl)
@@ -122,25 +130,14 @@ stopCluster(cl)
 
 
 
-system.time(workflow_fun(3, conditions))
-
-load("output/ppvs_out/ppvs_out_N100_corr0_loc_TEfirst10_r415.RData")
-load("output/df_out/df_out_N100_corr0_loc_TEfirst10_r415.RData")
-
-data_s1_small_r415 <- load_and_prepare_data(file_path = NULL, sample_size = 100, replication = 415, corr = 0, loc_TE = "first10")
-refm_fit_s1_small_r415 <- fit_reference_model(data_s1_small_r415)
-output_s1_small_r415 <- run_projpred(refm_fit_s1_small_r415, K = 5, nterms_max = 11)
-cvvs_s1_small_r415 <- output_s1_small_r415$cvvs
-
-
-if (is.na(output_s1_small_r415$suggested_size)) {
-  save(cvvs_s1_small_r415, file = paste0("output/cvvs4suggest_size_failed/cvvs_", "data_s1_small_r415", ".RData"))
-}
-
-
-load("output/cvvs4suggest_size_failed/cvvs_data_s1_small_r415.RData")
-load("output/cvvs4suggest_size_failed/cvvs_N100_corr0_loc_TEfirst10_r415.RData")
-
-
-
+# # Get the list of saved df_out files
+# saved_files <- list.files("output/df_out/", full.names = FALSE)
+# 
+# # Extract the replication numbers from filenames
+# saved_reps <- gsub(".*_r(\\d+)\\.RData$", "\\1", saved_files)
+# saved_reps <- as.numeric(saved_reps)
+# 
+# 
+# # Find the replications that were not completed
+# setdiff(conditions$r, saved_reps)
 
