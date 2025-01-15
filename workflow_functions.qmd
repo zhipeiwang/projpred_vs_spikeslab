@@ -7,6 +7,7 @@ editor: visual
 # separate functions for the analysis pipeline
 
 ## load, filter and standardize data
+
 ```{r}
 load_and_prepare_data <- function(file_path, sample_size, replication) {
   data <- fread(file_path)[N == sample_size & r == replication]
@@ -17,6 +18,7 @@ load_and_prepare_data <- function(file_path, sample_size, replication) {
 ```
 
 ## fit the reference model and save for projpred
+
 ```{r}
 fit_reference_model <- function(data, seed = 123) {
   refm_fit <- brm(
@@ -33,8 +35,8 @@ fit_reference_model <- function(data, seed = 123) {
 }
 ```
 
-
 ## run cross-validation for variable selection
+
 ```{r}
 run_projpred <- function(refm_fit, K, nterms_max = 11, seed = 123) {
   
@@ -67,8 +69,8 @@ run_projpred <- function(refm_fit, K, nterms_max = 11, seed = 123) {
 
 ```
 
-
 ## get final predictors
+
 ```{r}
 get_final_predictors <- function(cv_result, custom_size = NULL) {
   # Generate the ranking for the cv_result
@@ -88,8 +90,8 @@ get_final_predictors <- function(cv_result, custom_size = NULL) {
 }
 ```
 
-
 ## calculate confusion matrix and inclusion/exclusion rates
+
 ```{r}
 calculate_inclusion_metrics <- function(selected_predictors, file_path, total_predictors = 50) {
   # Define true predictors based on the file path
@@ -132,6 +134,7 @@ calculate_inclusion_metrics <- function(selected_predictors, file_path, total_pr
 ```
 
 ## analyze cross-validation results
+
 ```{r}
 analyze_cv_results <- function(cv_results, file_path, custom_size = NULL) {
   final_predictors_list <- list()
@@ -157,8 +160,8 @@ analyze_cv_results <- function(cv_results, file_path, custom_size = NULL) {
 }
 ```
 
-
 # run the analysis pipeline one step at a time
+
 ```{r}
 data_s1_small_r1 <- load_and_prepare_data("p50/sim_p50_t10.csv", sample_size = 100, replication = 1)
 ```
@@ -167,29 +170,25 @@ data_s1_small_r1 <- load_and_prepare_data("p50/sim_p50_t10.csv", sample_size = 1
 refm_s1_small_r1 <- fit_reference_model(data_s1_small_r1)
 ```
 
-
 ```{r}
 # yrep <- posterior_predict(refm_s1_small_r1$refm_fit, draws = 50)
 # ppc_dens_overlay(data_s1_small_r1$y, yrep)
 ```
 
-
 ```{r}
 cv_results_s1_small_r1 <- run_cross_validation(refm_s1_small_r1$refm_obj, k_values = c(5))
 ```
 
-
-
 ```{r}
 cv_analysis_s1_small_r1 <- analyze_cv_results(cv_results_s1_small_r1, 'p50/sim_p50_t10.csv')
 ```
-
 
 ```{r}
 cv_analysis_s1_small_r1$confusion_matrices
 ```
 
 # the comprehensive function
+
 ```{r}
 run_analysis_pipeline <- function(file_path, sample_size, replication, max_terms = 11, custom_size = NULL, k_values = c(2, 5, 10), seed = 123) {
   # start timing
@@ -228,68 +227,55 @@ run_analysis_pipeline <- function(file_path, sample_size, replication, max_terms
 }
 ```
 
-
 # run the comprehensive function
 
 ```{r}
 ppvs_s1_small_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10.csv", sample_size = 100, replication = 1, k_values = c(5))
 ```
 
-
 ```{r}
 ppvs_s1_small_r1_10fold <- run_analysis_pipeline("p50/sim_p50_t10.csv", sample_size = 100, replication = 1, k_values = c(10))
 ```
-
 
 ```{r}
 ppvs_s1_large_r1_2fold <- run_analysis_pipeline("p50/sim_p50_t10.csv", sample_size = 400, replication = 1, k_values = c(2))
 ```
 
-
 ```{r}
 ppvs_s1_large_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10.csv", sample_size = 400, replication = 1, k_values = c(5))
 ```
-
 
 ```{r}
 ppvs_s2_small_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_first10.csv", sample_size = 100, replication = 1, k_values = c(5))
 ```
 
-
 ```{r}
 ppvs_s2_small_r1_10fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_first10.csv", sample_size = 100, replication = 1, k_values = c(10))
 ```
-
 
 ```{r}
 ppvs_s2_large_r1_2fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_first10.csv", sample_size = 400, replication = 1, k_values = c(2))
 ```
 
-
 ```{r}
 ppvs_s2_large_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_first10.csv", sample_size = 400, replication = 1, k_values = c(5))
 ```
-
 
 ```{r}
 ppvs_s3_small_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_mixed.csv", sample_size = 100, replication = 1, k_values = c(5))
 ```
 
-
 ```{r}
 ppvs_s3_small_r1_10fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_mixed.csv", sample_size = 100, replication = 1, k_values = c(10))
 ```
-
 
 ```{r}
 ppvs_s3_large_r1_2fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_mixed.csv", sample_size = 400, replication = 1, k_values = c(2))
 ```
 
-
 ```{r}
 ppvs_s3_large_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.4_mixed.csv", sample_size = 400, replication = 1, k_values = c(5))
 ```
-
 
 ```{r}
 ppvs_s4_small_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_first10.csv", sample_size = 100, replication = 1, k_values = c(5))
@@ -299,36 +285,26 @@ ppvs_s4_small_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_first10
 ppvs_s4_small_r1_10fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_first10.csv", sample_size = 100, replication = 1, k_values = c(10))
 ```
 
-
 ```{r}
 ppvs_s4_large_r1_2fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_first10.csv", sample_size = 400, replication = 1, k_values = c(2))
 ```
-
 
 ```{r}
 ppvs_s4_large_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_first10.csv", sample_size = 400, replication = 1, k_values = c(5))
 ```
 
-
 ```{r}
 ppvs_s5_small_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_mixed.csv", sample_size = 100, replication = 1, k_values = c(5))
 ```
-
 
 ```{r}
 ppvs_s5_small_r1_10fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_mixed.csv", sample_size = 100, replication = 1, k_values = c(10))
 ```
 
-
 ```{r}
 ppvs_s5_large_r1_2fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_mixed.csv", sample_size = 400, replication = 1, k_values = c(2))
 ```
 
-
 ```{r}
 ppvs_s5_large_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_mixed.csv", sample_size = 400, replication = 1, k_values = c(5))
 ```
-
-
-
-

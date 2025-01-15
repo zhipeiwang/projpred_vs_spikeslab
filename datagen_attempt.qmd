@@ -1,0 +1,88 @@
+---
+title: "datagen_attempt"
+format: html
+---
+
+```{r}
+library(Matrix)
+library(MASS)
+# R=500 #replications
+t=10 #true effects
+p=60 #p = c(25,50) #number of predictors
+bc=0.80 #correlation among blocks of predictors bc = c(0,.4,.8)
+N=100 #number of observations
+dat2<-data.frame()
+
+mu = c(rep(0,p))
+    
+### THIS BETA FOR FIRST 10 CONDITIONS: first 10 effects are true 
+beta = c(rep(c(1.5,.9,.9,.3,.3),2),rep(0,p-t)) #first 10 effects are true 
+
+dat<-data.frame()
+Sigma0<-diag(p)
+b1<-matrix(bc,nrow=5,ncol=5)
+diag(b1)<-1
+Sigma0<-as.matrix(bdiag(rep(list(b1),12))) #block diagonal matrix 
+    
+temp<-data.frame()
+X<-mvrnorm(n=N, mu=mu,Sigma =Sigma0)
+colnames(X)<-colnames(X, prefix="X", do.NULL = FALSE)
+y<-c(rep(0,N)) #generate placeholder y
+for(i in 1:nrow(X)){
+  y[i]<-X[i,] %*% beta + rnorm(1)} #generate y
+temp<-as.data.frame(cbind(y,X)) #make into dataframe
+dat<-rbind(temp,dat)
+cor(X)
+
+dat2<-rbind(dat,dat2)
+```
+
+```{r}
+dat2[ , -1] <- scale(dat2[ , -1])
+```
+
+
+```{r}
+lm(data = dat2, y ~ .)
+```
+
+```{r}
+refm_fit_p60 <- brm(
+  formula = y ~ ., 
+  data = dat2,  
+  family = gaussian(),  
+  prior = prior(horseshoe(par_ratio = 10/60), class = "b"),  
+  chains = 4, 
+  iter = 2000,
+  seed = seed,
+  backend = "cmdstanr"
+ )
+```
+```{r}
+start.time <- Sys.time()
+
+refm_obj_p60 <- get_refmodel(refm_fit_p60)
+
+cvvs_p60 <- cv_varsel(
+  refm_obj_p60,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 11,
+  seed = seed,
+  verbose = FALSE
+)
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+```
+
+
+```{r}
+plot(cvvs_p60, stats = "mlpd", ranking_nterms_max = NA)
+```
+

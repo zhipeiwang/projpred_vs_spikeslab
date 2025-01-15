@@ -130,6 +130,8 @@ colnames(mean_table) <- heuristic_prefixes
 # Print the mean table
 mean_table <- round(mean_table, 4)
 print(mean_table)
+
+
 ```
 
 
@@ -139,7 +141,7 @@ print(mean_table)
 # List all files in the df_out folder
 df_out_files <- list.files("output/df_out/", full.names = TRUE, pattern = "\\.RData$")
 
-# Filter files with loc_TE = "first10"
+# Filter files with loc_TE = "mixed"
 files_mixed <- df_out_files[grepl("_loc_TEmixed_", df_out_files)]
 
 # the true predictors for mixed
@@ -202,6 +204,7 @@ colnames(mean_table_mixed) <- heuristic_prefixes
 # Print the mean table
 mean_table_mixed <- round(mean_table_mixed, 4)
 print(mean_table_mixed)
+
 ```
 
 
@@ -401,7 +404,7 @@ print(mean_rates_table_ssvs)
 
 ## loc_TE = "mixed"
 ```{r}
-# Filter files with loc_TE = "first10"
+# Filter files with loc_TE = "mixed"
 ssvs_files_mixed <- ssvs_files[grepl("_loc_TEmixed_", ssvs_files)]
 
 # Define true predictors
@@ -442,6 +445,7 @@ print(mean_rates_table_ssvs_mixed)
 ```
 
 ### ssvs by category
+#### loc_TE = "first10"
 ```{r}
 # Define effect size categories
 effect_size_groups <- list(
@@ -502,6 +506,7 @@ colnames(mean_rates_ssvs_cat) <- c("Effect Size", "Mean Inclusion Rate")
 
 # View results
 print(mean_rates_ssvs_cat)
+
 ```
 
 
@@ -562,13 +567,135 @@ mean_rates_ssvs_cat_uncorrTE <- aggregate(
 
 # Rename columns for clarity
 colnames(mean_rates_ssvs_cat_uncorrTE) <- c("Effect Size", "Mean Inclusion Rate")
+mean_rates_ssvs_cat_uncorrTE[, 2] <- round(mean_rates_ssvs_cat_uncorrTE[, 2], 4)
 
 # View results
 print(mean_rates_ssvs_cat_uncorrTE)
 ```
 
 
+```{r}
+# dataframe for correlated true effects
+# df_corr <- cbind(mean_rates_ppvs_cat, mean_rates_ssvs_cat[, 2])
+# colnames(df_corr) <- c("effect_size", "default", "type_lower", "thres_upper", "thres_lower", "ssvs")
+```
 
+
+```{r}
+df_corr <- data.frame(
+  effect_size = c("large", "medium", "null", "small"),
+  default = c(1.0000, 0.8864, 0.0027, 0.1227),
+  type_lower = c(1.0000, 0.9773, 0.0173, 0.2545),
+  thres_upper = c(1.0000, 0.8864, 0.0023, 0.1182),
+  thres_lower = c(1.0000, 0.8909, 0.0023, 0.1227),
+  ssvs = c(1.0000, 0.9825, 0.0075, 0.2775)
+)
+
+# Reshape the dataframe
+df_corr <- df_corr %>%
+  pivot_longer(
+    cols = -effect_size, # Exclude effect_size from the reshaping
+    names_to = "heuristic", # Column name for heuristics
+    values_to = "inclusion_rate" # Column name for rates
+  ) %>%
+  mutate(
+    method = if_else(heuristic == "ssvs", "SSVS", "PPVS") # Create the method column
+  )
+
+df_corr$condition <- "correlated"
+
+# Print the reshaped dataframe
+print(df_corr)
+```
+
+```{r}
+df_all <- rbind(df_corr, df_uncorr)
+print(df_all)
+```
+
+
+```{r}
+ggplot(df_all, aes(x = effect_size, y = inclusion_rate)) +
+  geom_point(aes(color = heuristic), size = 3) +
+  facet_wrap(~condition, scales = "free_y")
+```
+
+```{r}
+# df_uncorr <- cbind(mean_rates_ppvs_cat_uncorrTE, mean_rates_ssvs_cat_uncorrTE[, 2])
+# colnames(df_uncorr) <- c("effect_size", "default", "type_lower", "thres_upper", "thres_lower", "ssvs")
+# df_uncorr
+```
+
+```{r}
+df_uncorr <- data.frame(
+  effect_size = c("large", "medium", "null", "small"),
+  default = c(1.0000, 1.0000, 0.0455, 0.2045),
+  type_lower = c(1.0000, 1.0000, 0.0732, 0.3068),
+  thres_upper = c(1.0000, 1.0000, 0.0443, 0.1705),
+  thres_lower = c(1.0000, 1.0000, 0.0455, 0.1705),
+  ssvs = c(1.0000, 0.9900, 0.0468, 0.2750)
+)
+
+# Reshape the dataframe
+df_uncorr <- df_uncorr %>%
+  pivot_longer(
+    cols = -effect_size, # Exclude effect_size from the reshaping
+    names_to = "heuristic", # Column name for heuristics
+    values_to = "inclusion_rate" # Column name for rates
+  ) %>%
+  mutate(
+    method = if_else(heuristic == "ssvs", "SSVS", "PPVS") # Create the method column
+  )
+
+df_uncorr$condition <- "uncorrelated"
+print(df_uncorr)
+```
+
+```{r}
+ggplot(df_all, aes(x = method, y = inclusion_rate, color = heuristic, shape = condition)) +
+  geom_point(size = 3) + 
+  facet_wrap(~effect_size, scales = "free_y", ncol = 4) + # Change number of columns based on your preference
+  labs(
+    title = "Inclusion Rates by Method, Heuristic, and Condition",
+    x = "Method",
+    y = "Inclusion Rate (%)",
+    color = "Heuristic",
+    shape = "Condition"
+  ) +
+  theme_minimal() + # Using a minimal theme
+  theme(
+    text = element_text(size = 12), # Adjust text size as needed
+    legend.position = "bottom", # Moving legend to the bottom
+    strip.text.x = element_text(size = 14, face = "bold") # Bold facet labels
+  ) +
+  scale_color_brewer(palette = "Set1") # Using a color-blind friendly palette
+
+```
+
+```{r}
+# Assuming df_all is your data frame and already contains the 'inclusion_rate' values for SSVS
+ssvs_data <- df_all %>% 
+  filter(method == "SSVS")
+
+# Plotting the data
+ggplot(df_all, aes(x = effect_size, y = inclusion_rate)) +
+  geom_point(data = filter(df_all, method != "SSVS"), aes(color = heuristic, shape = heuristic), size = 3) +
+  facet_wrap(~condition, scales = "free_y") +
+  geom_hline(data = ssvs_data, aes(yintercept = inclusion_rate, group = effect_size), color = "black", linetype = "solid", size = 1) +
+  scale_color_manual(values = c("default" = "red", "thres_lower" = "blue", "thres_upper" = "green", "type_lower" = "purple")) +
+  scale_shape_manual(values = c("default" = 16, "thres_lower" = 17, "thres_upper" = 18, "type_lower" = 19)) +
+  labs(
+    title = "Inclusion Rates by Method, Heuristic, and Condition",
+    x = "Effect Size",
+    y = "Inclusion Rate (%)",
+    color = "Heuristic"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+```
 
 
 

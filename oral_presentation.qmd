@@ -1,0 +1,179 @@
+---
+title: "Comparing Bayesian Variable Selection Methods"
+subtitle: "Projection Predictive Inference Versus Spike-and-Slab Priors" 
+author: "Kim (Zhipei) Wang"
+format: 
+  revealjs:
+    title-block-style: default
+    slide-number: true
+    center: true
+include-in-header:
+  - text: |
+      <style>
+      #title-slide .title {
+        font-size: 1.7em;
+      }
+      </style>
+bibliography: references.bib
+embed-resources: true
+---
+
+## Introduction
+
+-   We live in a data-rich era, but prediction challenges remain:
+    -   **Noisy data**
+    -   **Poor generalization**
+    -   **High-dimensional datasets**
+
+## Less is more
+
+-   A critical problem in methodology: **Variable Selection**.\
+-   My thesis compares:
+    -   **Spike-and-Slab Variable Selection (SSVS)** [@george1993; @mitchell1988](benchmark).
+    -   **Projection Predictive Variable Selection (PPVS)** [@piironen2020](new method).
+
+## Spike-and-Slab Variable Selection (SSVS)
+
+-   SSVS outputs a **probability** for each variable:
+    -   to be included, or discarded?\
+-   Widely used in Bayesian statistics\
+    - **Benchmark**
+
+## What is Projection Predictive Variable Selection (PPVS)?
+
+-   A **two-stage approach** to variable selection:
+    1.  Fit a comprehensive **reference model**\
+    2.  - Identify a minimal **submodel** that retains predictive accuracy\
+        - **Project** the reference model onto the submodel
+
+## Performance evaluation plot
+```{r}
+load("D:/projpred_vs_spikeslab/output/cvvs4suggest_size_failed/cvvs_N100_corr0.8_loc_TEfirst10_r6.RData")
+plot(cvvs_out)
+```
+
+
+## Simulation Study:
+
+### Design [@bainter2023]:
+
+| **Variable**            | **Levels** | **Values**              |
+|--------------------------|------------|-------------------------|
+| **Sample size**          | 2          | 100, 400               |
+| **Predictors (10 true effects)** | 1 | 50                     |
+| <span style="color: gray;">Regression coeff. (β)</span> | <span style="color: gray;">3</span> | <span style="color: gray;">{0.1, 0.3, 0.5}</span> |
+| <span style="color: gray;">Correlation (σ)</span> | <span style="color: gray;">3</span> | <span style="color: gray;">{0, 0.4, 0.8}</span> |
+| <span style="color: gray;">True effect pattern</span> | <span style="color: gray;">2</span> | <span style="color: gray;">{mixed, clustered}</span> |
+
+
+
+## Variable selection accuracy 
+```{r}
+rates_df_pre <- data.frame(
+  FalseInclusion = c(0.039, 0.050, 0.0396, 0.0407, 0.0023),
+  TrueInclusion = c(0.7026, 0.7227, 0.7012, 0.706, 0.706),
+  Method = c("PPVS", "PPVS", "PPVS", "PPVS", "SSVS"),
+  Heuristic = c("default (upper)", "lower", "thres_upper", "thres_lower", "ssvs")
+)
+```
+
+```{r}
+library(ggplot2)
+```
+
+```{r}
+ggplot(rates_df_pre, aes(x = FalseInclusion, y = TrueInclusion)) +
+  # Differentiate by shape (method: PPVS vs SSVS)
+  geom_point(aes(color = Heuristic, shape = Method), size = 5.5) +
+  # Custom colors for PPVS heuristics
+  scale_color_manual(
+    values = c(
+      "default (upper)" = "red",
+      "lower" = "blue",
+      "thres_lower" = "green",
+      "thres_upper" = "orange"
+    ),
+    name = "PPVS Heuristics"  # Legend title for colors
+  ) +
+  # Custom shapes for PPVS and SSVS
+  scale_shape_manual(
+    values = c(
+      "PPVS" = 16,  # Circle for PPVS
+      "SSVS" = 17   # Triangle for SSVS
+    ),
+    name = "Method"  # Legend title for shapes
+  ) +
+  # Labels and styling
+  labs(
+    title = "True vs False Inclusion Rates",
+    x = "False Inclusion Rate",
+    y = "True Inclusion Rate"
+  ) +
+  theme_minimal() +
+  # Expand limits to prevent zoom-in
+  expand_limits(x = c(0, 0.6), y = c(0.0, 0.8)) +
+  theme(
+    legend.text = element_text(size = 14),  # Increase legend text size
+    legend.title = element_text(size = 16),  # Increase legend title size
+    legend.position = "right",  # Position the legend to the right
+    text = element_text(size = 12)  # Default text size for other elements
+  )
+```
+
+
+## Variable selection accuracy
+### zoomed-in
+```{r}
+ggplot(rates_df_pre, aes(x = FalseInclusion, y = TrueInclusion)) +
+  # Differentiate by shape (method: PPVS vs SSVS)
+  geom_point(aes(color = Heuristic, shape = Method), size = 5.5) +
+  # Custom colors for PPVS heuristics
+  scale_color_manual(
+    values = c(
+      "default (upper)" = "red",
+      "lower" = "blue",
+      "thres_lower" = "green",
+      "thres_upper" = "orange"
+    ),
+    name = "PPVS Heuristics"  # Legend title for colors
+  ) +
+  # Custom shapes for PPVS and SSVS
+  scale_shape_manual(
+    values = c(
+      "PPVS" = 16,  # Circle for PPVS
+      "SSVS" = 17   # Triangle for SSVS
+    ),
+    name = "Method"  # Legend title for shapes
+  ) +
+  # Labels and styling
+  labs(
+    title = "True vs False Inclusion Rates",
+    x = "False Inclusion Rate",
+    y = "True Inclusion Rate"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.text = element_text(size = 14),  # Increase legend text size
+    legend.title = element_text(size = 16),  # Increase legend title size
+    legend.position = "right",  # Position the legend to the right
+    text = element_text(size = 12)  # Default text size for other elements
+  )
+
+```
+
+## Conclusion
+
+### Findings from work done so far
+
+-   PPVS is expected to be better for **high-dimensional data**:
+-   for **"lower-dimensional" data** (50 predictors, n = 100 or 400):
+    -   Performance differences are minimal
+
+### Future Work:
+
+-   Extend simulations to **higher dimensions**\
+-   Explore **complex scenarios** to find where PPVS excels
+
+
+
+## Citations
