@@ -1,0 +1,45 @@
+$if(has-frontmatter)$
+\frontmatter
+$endif$
+$if(title)$
+\cleardoublepage
+\thispagestyle{empty}
+{\centering
+\hbox{}\vskip 0cm plus 1fill
+% \vspace{25ex}
+{\Large\bfseries $title$ \par}
+$if(subtitle)$
+\vspace{3ex}
+{\large $subtitle$ \par}
+$endif$
+\vspace{3ex}
+{\normalsize \textit{Master's degree in Methodology and Statistics for the Behavioural, \\ Biomedical and Social Sciences} \par}
+\vspace{9ex}
+$for(by-author)$
+{\large\bfseries $by-author.name.literal$ \par}
+\vspace{9ex}
+% {\Large ORCID: $by-author.orcid$ \par}
+% \vspace{3ex}
+{\large Supervisors: Dr. Sara van Erp \\
+Florian van Leeuwen, MSc \par}
+% \vskip 0cm plus 2fill
+\vspace{9ex}
+{\normalsize \textit{Utrecht University} \par}
+\vspace{9ex}
+{\normalsize Word count: 2447 \par}
+\vspace{3ex}
+{\normalsize $date$ \par}
+\hbox{}\vskip 0cm plus 1fill
+% \vspace{12ex}
+% $for(by-author.affiliations)$%
+% $if(it.department)$%
+% {\large $it.department$ \par}
+% \vspace{3ex}
+% $endif$%
+% {\large $it.name$ \par}
+% $endfor$$endfor$%
+% \vspace{12ex}
+% {\small Submitted in total fulfilment of the requirements
+% of the degree of Doctor of Philosophy \par}
+}
+$endif$

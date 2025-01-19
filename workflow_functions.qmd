@@ -9,7 +9,7 @@ editor: visual
 ## load, filter and standardize data
 
 ```{r}
-load_and_prepare_data <- function(file_path, sample_size, replication) {
+load_and_prepare_data0 <- function(file_path, sample_size, replication) {
   data <- fread(file_path)[N == sample_size & r == replication]
   data <- as.data.frame(data) %>% select(-V1, -N, -r)  # Adjust 'V1' as needed based on the data loading method
   data[ , -1] <- scale(data[ , -1])  # Standardize all columns except dependent variable 'y'
@@ -163,7 +163,7 @@ analyze_cv_results <- function(cv_results, file_path, custom_size = NULL) {
 # run the analysis pipeline one step at a time
 
 ```{r}
-data_s1_small_r1 <- load_and_prepare_data("p50/sim_p50_t10.csv", sample_size = 100, replication = 1)
+data_s1_small_r1 <- load_and_prepare_data0("p50/sim_p50_t10.csv", sample_size = 100, replication = 1)
 ```
 
 ```{r}
@@ -308,3 +308,8 @@ ppvs_s5_large_r1_2fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_mixed.c
 ```{r}
 ppvs_s5_large_r1_5fold <- run_analysis_pipeline("p50/sim_p50_t10_corr0.8_mixed.csv", sample_size = 400, replication = 1, k_values = c(5))
 ```
+
+
+
+
+

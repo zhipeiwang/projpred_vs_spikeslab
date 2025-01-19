@@ -1,0 +1,255 @@
+---
+title: "Comparing Bayesian Post-estimation Variable Selection Methods: Projection Predictive Variable Selection Versus Stochastic Search Variable Selection"
+subtitle: "Research Report" 
+author: 
+  - name: "Zhipei (Kim) Wang (5041333)"
+    affiliation: 
+      - name: "Utrecht University"
+      - department: "Methodology and Statistics"
+date: 01/18/2025 # last-modified
+date-format: long
+format:
+  pdf:
+    papersize: a4
+    fig-pos: 'H'
+    tbl-pos: 'H'
+    number-sections: true
+    colorlinks: true
+    indent: true
+    header-includes:
+      - \usepackage{fancyhdr}
+      - \usepackage{amsmath}
+      - \usepackage{multirow}
+      - \usepackage{booktabs}
+      - \usepackage{pifont}
+    geometry:
+      - top=2.5cm
+      - bottom=2.5cm
+      - left=2.5cm
+      - right=2.5cm
+    mainfont: Times New Roman
+    sansfont: Times New Roman
+    linestretch: 2
+    fontsize: 11pt
+    template-partials:
+      - "before-body.tex"
+bibliography: bibliography.bib
+link-citations: true
+csl: apa7.csl
+execute:
+  message: false
+  warning: false
+fig-cap-location: top
+---
+
+# Introduction
+
+Regression models are widely used to investigate the influence of predictors on a response 
+variable and identify which predictors have substantial effects. However, in the era of big data, 
+the number of predictors has grown, and researchers often face high-dimensional problems 
+where the number of predictors exceeds the number of observations. This "small $n$, large $p$" dilemma introduces several challenges. Notably, fitting a model can become infeasible when the number of features exceeds the number of observations. Moreover, in such cases, models are prone to overfitting—they rely too heavily on the specific dataset at hand and fail to generalize to new data or to accurately represent the true underlying population characteristics [see @babyakWhatYouSee2004 for an overview of the problem of overfitting].
+
+To address this, various regularization methods have been developed within both frequentist and 
+Bayesian frameworks. Frequentist statisticians typically approach it by adding a penalty term to the loss 
+function [e.g. @hoerlRidgeRegressionBiased2000; @zouRegularizationVariableSelection2005], which shrinks parameter estimates and potentially sets them to zero [@tibshiraniRegressionShrinkageSelection1996], thereby performing variable selection. Bayesian statisticians use shrinkage priors that aim to shrink small effects to zero, while leaving the substantial effects intact. Nevertheless, Bayesian approaches face the challenge that shrinkage priors do not always reduce 
+coefficients exactly to zero, making post-estimation variable selection a non-trivial task [@piironenProjectiveInferenceHighdimensional2020].
+
+In the Bayesian framework, post-estimation variable selection can be broadly divided into two main approaches. The first involves continuous shrinkage priors such as ridge [@hsiangBayesianViewRidge1975] and LASSO [@parkBayesianLasso2008], which are the Bayesian counterparts of frequentist penalties. After fitting the model, 
+summaries of the posterior distribution are used to determine whether a predictor should remain in the model, for 
+example based on thresholds for posterior point summaries or 95\% credibility intervals. 
+Alternatively, spike-and-slab priors [@georgeVariableSelectionGibbs1993; @mitchellBayesianVariableSelection1988] 
+incorporate an indicator variable, assigning each predictor to either the "spike" (negligible effect) 
+or the "slab" (substantial effect). Marginal inclusion probabilities (MIPs) are then computed for each 
+predictor by calculating how many of the Markov chain Monte Carlo (MCMC) samples of its coefficient were assigned to the 
+slab, with a threshold often involved often to decide whether to keep predictors.
+
+Despite the range of existing methods, limitations remain. For example, there is no universal 
+standard for using credibility intervals in real-world analysis, as optimal credibility intervals vary 
+for different data-generating conditions [@vanerpShrinkagePriorsBayesian2019]. Additionally, as dimensionality 
+grows, the marginal posteriors of relevant features tend to overlap more with zero compared to 
+lower-dimension situations, complicating inference [@piironenProjectiveInferenceHighdimensional2020]. To overcome these difficulties, @piironenProjectiveInferenceHighdimensional2020
+ proposed the projection predictive variable selection (PPVS) method, a two-stage approach that first builds a reference model giving good prediction accuracy, and then 
+identifies a minimal subgroup of predictors that can approximate this accuracy.
+
+Given that the PPVS method is relatively new, and its performance is not investigated in many scenarios, we aim to implement it under different conditions and evaluate its performance. To benchmark its effectiveness, we compare it against stochastic search variable selection (SSVS), a well-established and widely used Bayesian variable selection method.
+
+The remainder of this thesis is organized as follows: In the next section, we review the two Bayesian variable selection methods discussed above. Following this, we conduct a simulation study to compare their performance and discuss the results. Finally, we examine the limitations of the current simulation study and propose potential future research directions.
+
+# Methods
+In Bayesian analysis, parameters are considered random variables with prior distributions that encapsulate prior beliefs about their values, unlike the frequentist approach that treats parameters as fixed but unknown. These beliefs are updated through the likelihood of the observed data, leading to posterior distributions that reflect updated beliefs post-data.
+
+This section delves into the specific Bayesian variable selection methods employed in this study: Stochastic Search Variable Selection (SSVS) and Projection Predictive Variable Selection (PPVS). Each method leverages distinct approaches to address the challenges of high-dimensional data analysis, particularly the identification and inclusion of significant predictors.
+
+## Stochastic search variable selection
+Consider the standard model for multiple linear regression applied to a response variable $Y$ across $n$ observations and $p$ predictors:
+\begin{equation}
+    y_i = \beta_0 + \sum_{j=1}^p x_{ij}\beta_j + \epsilon_i, \quad \epsilon_i \overset{\text{iid}}{\sim} N(0, \sigma^2)
+\end{equation}
+where $\beta_0$ is the intercept, $\beta_j$ represents the regression coefficients, $x_{ij}$ denotes the $i^{\text{th}}$ observation of the $j^{\text{th}}$ predictor, and $\epsilon_i$ is the random error with mean zero and variance $\sigma^2$.
+
+In Bayesian regression, a common approach to regularization involves applying sparsifying priors to the regression coefficients $\beta_j$ to encourage shrinkage towards zero. The relevance of each $\beta_j$ is assessed by examining their marginal distributions. For the SSVS method, this is achieved using the spike-and-slab prior.
+ 
+The spike-and-slab prior [@mitchellBayesianVariableSelection1988; @georgeVariableSelectionGibbs1993] falls into the category of discrete mixture priors. The idea is that it is a combination of a point mass at 0 (the spike), and a diffused distribution (the slab). Such a prior can often be written as a mixture of two normal distributions [@piironenProjectiveInferenceHighdimensional2020]
+$$
+\begin{aligned}
+    \beta_j \mid \lambda_j, c, \varepsilon &\sim \lambda_j \text{N}(0, c^2) + (1 - \lambda_j) \text{N}(0, \varepsilon^2), \nonumber \\
+    \lambda_j \mid \pi &\sim \text{Bernoulli}(\pi), \quad j = 1, \dots, p.
+\end{aligned}
+$$
+Here, $\varepsilon$ is typically much smaller than $c$, with $\lambda_j = 1$ indicating that the coefficient $\beta_j$is drawn from the slab, and $\lambda_j = 0$ indicating it is drawn from the spike. The spike can either be formulated to be very peaked at zero [@mitchellBayesianVariableSelection1988] by setting $\varepsilon$ to zero, or to be highly concentrated around zero [@georgeVariableSelectionGibbs1993] by setting $\varepsilon$ to a small positive value. The prior probability $\pi$ (typically 0.5) of including the predictor or not is included so a binary decision about the inclusion of a predictor can be made. A hyperprior can also be set for $\pi$ by assigning it for example a standard uniform distribution [@ishwaranSpikeSlabVariable2005]. 
+
+The SSVS method utilizes spike-and-slab priors for variable selection. After estimation, the marginal inclusion probability (MIP) for each predictor is determined from the posterior summaries. The MIP represents the proportion of MCMC samples where $\lambda_j = 1$. Typically, a variable is included in the model if its MIP exceeds 0.5, a threshold shown to be optimal under certain conditions [@barbieriOptimalPredictiveModel2004].
+
+## Projection predictive variable selection
+PPVS involves a two-stage approach starting with fitting a comprehensive reference model with all predictors. This reference model is then projected onto a smaller submodel that maintains comparable predictive performance. The process, though conceptually straightforward, involves multiple complex steps. @mclatchieAdvancesProjectionPredictive2024 proposed an efficient projection predictive workflow, which is briefly reviewed as follows.
+
+Initially, a reference model is recommended to be built with a sparsifying prior using all the predictors [@piironenProjectiveInferenceHighdimensional2020]. The regularized horseshoe prior was specifically chosen for use in the simulation study's PPVS component due to its nature as a continuous mixture of normal distributions. This is in contrast to the spike-and-slab prior, which is a discrete mixture. Both of these priors represent the state-of-the-art shrinkage priors, each offering a distinct approach to regularization. Additionally, in high-dimensional settings, preliminary feature screening or supervised principal component analysis is recommended to reduce computational demands, and a useful technique to combine those two is known as supervised
+principal components [@bair2006].
+
+The solution path is then established, detailing which predictors are selected at each step as the regularization process unfolds. Two primary search approaches are utilized: KL divergence-based forward search and Lasso regularization, with the latter noted for its computational efficiency but higher variability across different data realizations [@mclatchieAdvancesProjectionPredictive2024].
+
+To ensure robustness and avoid overfitting, cross-validation is crucial both in evaluating model performance on the solution path and during the model search process. However, given the significant computational demands of cross-validation, employing methods to accelerate it becomes necessary.
+
+For example, different projection approaches can be applied when we project the reference model to the final submodel we chose. @piironenProjectiveInferenceHighdimensional2020 proposed the clustered projection approach, that intermediates between the draw-by-draw [@goutisModelChoiceGeneralised1998; @Dupuis2003] technique and the single-point [@tranPredictiveLasso2012] technique. Additionally, executing a preliminary run without cross-validating the search process can provide a useful heuristic for determining an upper bound on the submodel size.
+
+Ultimately, the optimal submodel size is determined based on its predictive closeness to the reference model. @mclatchieAdvancesProjectionPredictive2024 suggested two primary heuristics for this decision: one based on differential utility intervals, as discussed in several studies [@catalinaLatentSpaceProjection2021; @piironenProjectiveInferenceHighdimensional2020; @projpred; @piironenSparsityInformationRegularization2017; @weberProjectionPredictiveVariable2024], and another that relies on the mean expected log point-wise predictive density (elpd) difference compared to the reference model [@sivulaUncertaintyBayesianLeaveOneOut2023]. The final step involves projecting the reference model onto the chosen submodel and using the projected posterior for inference as in standard MCMC analyses.
+
+# Simulation Study
+
+To compare the performance of SSVS and PPVS, we employed simulated datasets with a challenging configuration characterized by highly correlated predictors and a small sample size. The simulation setup, adopted from @bainterComparingBayesianVariable2023, consisted of 100 observations and 50 predictors, among which 10 had true effects. The predictors $\boldsymbol{X}$ were generated from a multivariate normal distribution with diagonal variances of 1 and block diagonal covariance structures. In the condition with correlated true effects, sets of five predictors exhibited high pairwise correlations of .8. The regression coefficients for this scenario, $\beta$ was defined as $\boldsymbol{\beta} = (1.5, .9, .9, .3, .3, 1.5, .9, .9, .3, .3, 0, . . . , 0)^{\prime}$, grouping the impactful predictors into two clusters.
+
+For the uncorrelated true effects condition, the magnitudes of the coefficients remained unchanged; however, their distribution across predictors was altered: every fifth predictor was impactful, resulting in a coefficient vector $\boldsymbol{\beta} = (1.5, 0, 0, 0, 0, .9, 0, . . . , 0)^{\prime}$. This modification ensured that the effects were isolated rather than clustered. 
+
+The response vector $\boldsymbol{Y}$ was drawn from $N(\mathbf{X} \boldsymbol{\beta}, \sigma^2 \mathbf{I})$, where $\sigma^2 = 1$, leading to four small, four medium, and two large effects with standardized regression coefficients of approximately .1, .3, and .5, respectively.
+
+The simulated datasets used in this study were generously provided by @bainterComparingBayesianVariable2023. Due to time constraints in this preliminary analysis, we randomly sampled 100 replications from the 500 available replications for each condition to evaluate the two methods.
+
+## Computational details
+### Stochastic search variable selection specifications
+Each iteration for SSVS was conducted using the \texttt{ssvs()} function from the SSVS package [@SSVSpackage]. The function was executed with the default prior settings where the spike is a point mass at zero. We ran one MCMC chain for each simulation, consisting of 20,000 iterations, with the initial 5,000 iterations discarded as warm-up.
+
+### Projection predictive variable selection specifications
+For PPVS, each iteration involved fitting a Bayesian multiple regression model using the function \texttt{horseshoe()} in the package \texttt{brms} [@brms2017; @brms2018; @brms2021], which is based on Stan [@Stan]. 
+
+We configured the true predictor-to-total predictor ratio parameter par_ratio at 0.2 to match the data-generating mechanism. The model was run across 4 chains with 2,000 iterations each, discarding 1,000 iterations per chain for warm-up.
+ 
+Using the function \texttt{cv\_varsel()} in the package \texttt{projpred} [@projpred], and following the suggestions of [@mclatchieAdvancesProjectionPredictive2024], we performed forward-search cross-validation using the clustered projection technique with 20 clusters and evaluated performance using 400 posterior draws. The search continued until it reached the maximum submodel size of 11, as we knew the number of true predictors to be 10 (to speed up simulations). 
+
+We used 5-fold cross-validation because trial runs showed no clear difference between 5-fold and 10-fold results. To automate the process, the \texttt{suggest\_size()} function from \texttt{projpred} was applied to the cross-validation results. 
+
+Four heuristic settings for \texttt{suggest\_size()} were explored: the default setting, "type_lower" where the type argument was set to lower, "thres_lower" combining a threshold for the elpd difference of -4 with type set to lower, and "thres_upper" with the same elpd difference threshold but type set to upper. Finally, the variables selected by each heuristic for every replication were saved.
+
+
+## Measures of performance
+Given our primary interest in variable selection accuracy, we concentrated our comparison of the two methods on their performance in this domain. Specifically, we calculated inclusion rates stratified by different effect sizes for both methods (@fig-rates visualizing the overall inclusion rates unstratified can be found in the Appendix). Inclusion rates quantify the proportion of true predictors correctly identified by the methods, differentiated by effect sizes. Therefore, the inclusion rates for small, medium, and large effects represent true inclusion rates, whereas those for null effect size serve as false inclusion rates. For SSVS, predictors were considered included if their marginal inclusion probabilities (MIPs) exceeded a threshold of 0.5, following the approach used in @bainterComparingBayesianVariable2023, which is deemed optimal under specific conditions [@barbieriOptimalPredictiveModel2004]. For PPVS, four different heuristics were employed in the variable selection process, resulting in a comparison across five distinct methods.
+
+# Results
+## Variable selection accuracy
+We examined the inclusion rates for both methods, PPVS across four heuristics, and SSVS, under conditions of correlated and uncorrelated true predictors. The results are presented separately @tbl-first for correlated predictors and @tbl-second for uncorrelated predictors. The inclusion rates for small, medium, and large effect sizes are thus the true inclusion rates, while the inclusion rates for the null effect size are false inclusion rates.
+
+::: {#tbl-first}
+
+\centering
+
+\begin{tabular}{@{}l*{4}{c}@{}c@{}}
+\toprule
+Effect Size & \multicolumn{4}{c}{PPVS (\%)} & \multicolumn{1}{c}{SSVS (\%)} \\
+\cmidrule(lr){2-5} \cmidrule(lr){6-6} % Separate cmidrule for SSVS
+            & Default & Type\_lower & Thres\_Upper & Thres\_Lower & \\
+\midrule
+Null        & 0.3     & \textbf{1.7}  & 0.2          & 0.2          & 0.8  \\
+Small       & 12.3    & 25.5  & 11.8         & 12.3         & \textbf{27.8} \\
+Medium      & 88.6    & 97.8  & 88.6         & 89.1         & \textbf{98.3} \\
+Large       & 100.0   & 100.0 & 100.0        & 100.0        & 100.0\\
+\bottomrule
+\end{tabular}
+Inclusion rates for PPVS and SSVS under correlated true predictors
+:::
+
+In the scenario of correlated true predictors detailed in @tbl-first, both methods displayed high inclusion rates for large effects. For medium effects, the inclusion rate for SSVS was slightly higher at 98.3\%, compared with 97.8\% for the best performing PPVS heuristic (type_lower). For small effects, SSVS continued to perform slightly better than PPVS, achieving an inclusion rate of 27.8\% compared to 25.5\% for the heuristic type_lower. The inclusion rates for null effects were significantly lower under correlated conditions, which is expected as the presence of correlation likely reduces the number of predictors with negligible coefficients being incorrectly included.
+
+
+::: {#tbl-second}
+\centering
+\begin{tabular}{@{}l*{4}{c}@{}c@{}}
+\toprule
+Effect Size & \multicolumn{4}{c}{PPVS (\%)} & \multicolumn{1}{c}{SSVS (\%)} \\
+\cmidrule(lr){2-5} \cmidrule(lr){6-6} % Separate cmidrule for SSVS
+            & Default & Type\_lower & Thres\_Upper & Thres\_Lower & \\
+\midrule
+Null        & 4.6     & \textbf{7.3}   & 4.3          & 4.6          & 4.7  \\
+Small       & 20.5    & \textbf{30.7}  & 17.0         & 17.1         & 27.5 \\
+Medium      & 100.0   & 100.0 & 100.0        & 100.0        & 99.0 \\
+Large       & 100.0   & 100.0 & 100.0        & 100.0        & 100.0\\
+\bottomrule
+\end{tabular}
+Inclusion rates for PPVS and SSVS under uncorrelated true predictors
+:::
+
+With uncorrelated true effects as shown in @tbl-second, both PPVS and SSVS achieved inclusion rates of 100\% for medium and large effects, irrespective of the heuristic used by PPVS. This demonstrates robust performance across both methods when effects are significant. For smaller and null effect sizes, the results varied more significantly between the heuristics. Specifically, the false inclusion rate, or the inclusion rate for null effects, was highest using the type\_lower heuristic at 7.3\% for PPVS, compared to 4.7\% for SSVS. Meanwhile, for small effects, SSVS generally showed superior performance compared to most PPVS heuristics, except the type\_lower heuristic which closely matched SSVS at 30.7\%.
+
+These findings underscore the effectiveness of SSVS in managing both small and null effects more efficiently than PPVS, particularly when using the type\_lower heuristic. Although this heuristic is competitive, it exhibits a higher propensity for false inclusions, suggesting that its use should be carefully considered. The analysis clearly highlights the strengths and limitations of each method and heuristic, providing essential insights for their application in statistical modeling where the true predictor structure is unknown.
+
+# Discussion
+Overall, SSVS demonstrated consistent and robust performance across various conditions compared to PPVS, especially for smaller effect sizes where it generally outperformed PPVS. Although PPVS occasionally exceeded SSVS with heuristic type\_lower, it was at the expense of higher false inclusion rates.
+
+Notably, the \texttt{suggest\_size()} function encountered numerous failures with some PPVS heuristics, such as returning 78 NAs for heuristic type_lower in the uncorrelated
+condition, potentially impacting the reliability of the mean inclusion rates reported. Future analysis could explore why this function failed and consider adjusting the maximum number of terms to search, which could help streamline the workflow for extensive replications.
+
+The computational cost also plays a significant role; the PPVS workflow typically takes 8 to 10 minutes per run, whereas SSVS usually completes in less than a minute, highlighting the efficiency of SSVS.
+
+Despite operating in a relatively low-dimensional space with 50 predictors and 10 true effects against a sample size of 100, PPVS is known to excel in high-dimensional settings. Moving forward, we plan to extend the simulation to
+higher dimensions to assess if PPVS's performance merits the increased computational demand.
+
+# References
+::: {#refs}
+:::
+# Appendix
+```{r echo=FALSE}
+#| label: fig-rates
+#| fig-cap: Overall true vs false inclusion rates by method
+
+rates_df_pre <- data.frame(
+  FalseInclusion = c(0.039, 0.050, 0.0396, 0.0407, 0.0023),
+  TrueInclusion = c(0.7026, 0.7227, 0.7012, 0.706, 0.706),
+  Method = c("PPVS", "PPVS", "PPVS", "PPVS", "SSVS"),
+  Heuristic = c("default (upper)", "lower", "thres_upper", "thres_lower", "ssvs")
+)
+
+library(ggplot2)
+
+ggplot(rates_df_pre, aes(x = FalseInclusion, y = TrueInclusion)) +
+  # Differentiate by shape (method: PPVS vs SSVS)
+  geom_point(aes(color = Heuristic, shape = Method), size = 5.5) +
+  # Custom colors for PPVS heuristics
+  scale_color_manual(
+    values = c(
+      "default (upper)" = "red",
+      "lower" = "blue",
+      "thres_lower" = "green",
+      "thres_upper" = "orange"
+    ),
+    name = "PPVS Heuristics"  # Legend title for colors
+  ) +
+  # Custom shapes for PPVS and SSVS
+  scale_shape_manual(
+    values = c(
+      "PPVS" = 16,  # Circle for PPVS
+      "SSVS" = 17   # Triangle for SSVS
+    ),
+    name = "Method"  # Legend title for shapes
+  ) +
+  # Labels and styling
+  labs(
+    title = "True vs False Inclusion Rates",
+    x = "False Inclusion Rate",
+    y = "True Inclusion Rate"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.text = element_text(size = 9),  # Increase legend text size
+    legend.title = element_text(size = 10),  # Increase legend title size
+    legend.position = "right",  # Position the legend to the right
+    text = element_text(size = 10)  # Default text size for other elements
+  )
+```
