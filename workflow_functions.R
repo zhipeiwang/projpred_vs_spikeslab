@@ -1,48 +1,38 @@
 
 # load, filter and standardize data
-# load_and_prepare_data <- function(file_path, sample_size, replication) {
-#   data <- fread(file_path)[N == sample_size & r == replication]
-#   data <- as.data.frame(data) %>% select(-V1, -N, -r)  # Adjust 'V1' as needed based on the data loading method
-#   data[ , -1] <- scale(data[ , -1])  # Standardize all columns except dependent variable 'y'
-#   return(data)
-# }
-load_and_prepare_data <- function(file_path, sample_size, replication, corr, loc_TE) {
-  # Define the file name mapping
-  file_info <- data.frame(
-    corr = c(0, 0.4, 0.8, 0.4, 0.8),
-    loc_TE = c("first10", "first10", "first10", "mixed", "mixed"),
-    file_name = c(
-      "sim_p50_t10",
-      "sim_p50_t10_corr0.4_first10",
-      "sim_p50_t10_corr0.8_first10",
-      "sim_p50_t10_corr0.4_mixed",
-      "sim_p50_t10_corr0.8_mixed"
-    )
-  )
+load_and_prepare_data <- function(sample_size, replication, corr, TE) {
   
-  # Match the correct file based on corr and loc_TE
-  file_row <- file_info[file_info$corr == corr & file_info$loc_TE == loc_TE, ]
-  if (nrow(file_row) == 0) {
-    stop("No matching file found for the specified corr and loc_TE.")
+  # Construct the file name based on the given conditions
+  data_dir <- "simdata/"
+  train_file <- paste0(data_dir, "train_n", sample_size, "_p75_corr", corr, "_TE", TE, ".RData")
+  test_file  <- paste0(data_dir, "test_fortrain_n", sample_size, "_p75_corr", corr, "_TE", TE, ".RData")
+  
+  # Load the correct training dataset
+  if (file.exists(train_file)) {
+    load(train_file)  # This loads `df_train`
+  } else {
+    stop(paste("Training data file not found:", train_file))
   }
   
-  # Construct the full file path
-  selected_file <- paste0("p50/", file_row$file_name, ".csv")
-  if (!file.exists(selected_file)) {
-    stop(paste("File not found:", selected_file))
+  # Load the correct test dataset
+  if (file.exists(test_file)) {
+    load(test_file)  # This loads `df_test`
+  } else {
+    stop(paste("Test data file not found:", test_file))
   }
   
-  # Load and filter the data
-  data <- fread(selected_file)[N == sample_size & r == replication]
+  # Extract the correct replication
+  if (replication > length(df_train) || replication > length(df_test)) {
+    stop("Replication index exceeds available replications.")
+  }
   
-  # Convert to data frame and remove unnecessary columns
-  data <- as.data.frame(data) %>% select(-V1, -N, -r)
+  # Select the appropriate replication
+  train_data <- df_train[[replication]]
+  test_data <- df_test[[replication]]
   
-  # Standardize all columns except the dependent variable 'y'
-  data[ , -1] <- scale(data[ , -1])
-  
-  return(data)
+  return(list(train = train_data, test = test_data))
 }
+
 
 
 # fit the reference model and save for projpred
@@ -51,17 +41,17 @@ fit_reference_model <- function(data, seed = 123) {
     formula = y ~ .,
     data = data,
     family = gaussian(),
-    prior = prior(horseshoe(par_ratio = 0.2), class = "b"),
+    prior = prior(horseshoe(), class = "b"),
     chains = 4,
     iter = 2000,
-    backend = "cmdstanr",
+#    backend = "cmdstanr",
     seed = seed
   )
   return(refm_fit)
 }
 
 # run cross-validation for variable selection
-run_projpred <- function(refm_fit, K, nterms_max = 11, seed = 123) {
+run_projpred <- function(refm_fit, K, nterms_max = 16, seed = 123) {
   
   # get the reference model object
   refm_obj <- get_refmodel(refm_fit)

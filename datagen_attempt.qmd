@@ -5,84 +5,333 @@ format: html
 
 ```{r}
 library(Matrix)
-library(MASS)
-# R=500 #replications
-t=10 #true effects
-p=60 #p = c(25,50) #number of predictors
-bc=0.80 #correlation among blocks of predictors bc = c(0,.4,.8)
-N=100 #number of observations
-dat2<-data.frame()
+data_gen <- function(rho, n, pattern_TE) {
 
-mu = c(rep(0,p))
+  # number of parameters in the model
+  p <- 75
+
+  # define xi given rho and pattern of true effect
+  if (pattern_TE == "clustered"){
+    if (rho == 0){
+      xi <- 0.59
+      } else if (rho == 0.2){
+        xi <- 0.44
+      } else if (rho == 0.8){
+        xi <- 0.29
+      } else if (rho == 0.5){
+        xi <- 0.34 #
+      } else {
+        warning("Invalid rho provided.")
+      }
+  } else if (pattern_TE == "mixed") {
+    xi <- 0.59
+  } else {
+    warning("Invalid pattern of true effects provided")
+  }
+
+
+
+  # build correlation matrix
+  block_size <- 5
+  num_matrices <- p / block_size
+  listOfMatrices <- vector("list", num_matrices)
+  for (i in 1:num_matrices) {
+    listOfMatrices[[i]] <- matrix(
+      rep(rho, block_size * block_size), nrow=block_size
+    )
+  }
+  R <- matrix(bdiag(listOfMatrices), nrow=p)
+  diag(R) <- 1
+
+  # build associated covariate coefficients
+  if (pattern_TE == "clustered"){
+    beta1 <- rep(xi, block_size)
+    beta2 <- rep(xi * 0.5, block_size)
+    beta3 <- rep(xi * 0.25, block_size)
+    beta4 <- rep(0, (num_matrices - 3) * block_size)
+    beta <- c(beta1, beta2, beta3, beta4)
     
-### THIS BETA FOR FIRST 10 CONDITIONS: first 10 effects are true 
-beta = c(rep(c(1.5,.9,.9,.3,.3),2),rep(0,p-t)) #first 10 effects are true 
-
-dat<-data.frame()
-Sigma0<-diag(p)
-b1<-matrix(bc,nrow=5,ncol=5)
-diag(b1)<-1
-Sigma0<-as.matrix(bdiag(rep(list(b1),12))) #block diagonal matrix 
+  } else if (pattern_TE == "mixed"){
+    beta <- rep(0, p)
+    true_indices <- seq(from = 1, by = 5, length.out = 15)
+    beta[true_indices[1:5]] <- xi
+    beta[true_indices[6:10]] <- xi * 0.5
+    beta[true_indices[11:15]] <- xi * 0.25
     
-temp<-data.frame()
-X<-mvrnorm(n=N, mu=mu,Sigma =Sigma0)
-colnames(X)<-colnames(X, prefix="X", do.NULL = FALSE)
-y<-c(rep(0,N)) #generate placeholder y
-for(i in 1:nrow(X)){
-  y[i]<-X[i,] %*% beta + rnorm(1)} #generate y
-temp<-as.data.frame(cbind(y,X)) #make into dataframe
-dat<-rbind(temp,dat)
-cor(X)
+  } else {
+    warning("Invalid pattern of true effects provided.")
+  }
 
-dat2<-rbind(dat,dat2)
+  # # define zero mean vector
+  sigma <- 1
+  mu <- rep(0, p)
+  # sds <- rep(sigma, p)
+  # S <- .cor2cov(R, sds)
+
+  # sample data
+  # X <- mvrnorm(n=n, mu=mu, Sigma=S)
+  X <- mvrnorm(n=n, mu=mu, Sigma=R) # sigma = 1 so here the cor and cov matrices are the same
+  X <- as.data.frame(X)
+  colnames(X) <- paste0("X", 1:ncol(X))
+  y <- as.matrix(X) %*% beta + sigma * rnorm(n=n)
+  data <- data.frame(y = y, X)
+
+  return(data)
+}
+
+```
+
+# 1.
+```{r}
+set.seed(123)
+
+# Define parameters
+rho <- 0.2
+n_train <- 75
+n_test <- 1000
+pattern_TE <- "clustered"
+r <- 3
+
+# Create lists to store multiple replications
+df_train <- vector("list", r)
+df_test <- vector("list", r)
+
+# Generate 3 replications of training and testing datasets
+for (i in 1:r) {
+  df_train[[i]] <- data_gen(rho, n_train, pattern_TE)  # Generate training data
+  df_test[[i]] <- data_gen(rho, n_test, pattern_TE)  # Generate test data
+}
+
+# Save lists of replications
+save(df_train, file = paste0("simdata/train_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+save(df_test, file = paste0("simdata/test_fortrain_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+```
+
+# 2.
+```{r}
+set.seed(123)
+
+# Define parameters
+rho <- 0.8
+n_train <- 75
+n_test <- 1000
+pattern_TE <- "clustered"
+r <- 3
+
+# Create lists to store multiple replications
+df_train <- vector("list", r)
+df_test <- vector("list", r)
+
+# Generate 3 replications of training and testing datasets
+for (i in 1:r) {
+  df_train[[i]] <- data_gen(rho, n_train, pattern_TE)  # Generate training data
+  df_test[[i]] <- data_gen(rho, n_test, pattern_TE)  # Generate test data
+}
+
+# Save lists of replications
+save(df_train, file = paste0("simdata/train_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+save(df_test, file = paste0("simdata/test_fortrain_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+```
+
+
+# 3.
+```{r}
+set.seed(123)
+
+# Define parameters
+rho <- 0.2
+n_train <- 50
+n_test <- 1000
+pattern_TE <- "clustered"
+r <- 3
+
+# Create lists to store multiple replications
+df_train <- vector("list", r)
+df_test <- vector("list", r)
+
+# Generate 3 replications of training and testing datasets
+for (i in 1:r) {
+  df_train[[i]] <- data_gen(rho, n_train, pattern_TE)  # Generate training data
+  df_test[[i]] <- data_gen(rho, n_test, pattern_TE)  # Generate test data
+}
+
+# Save lists of replications
+save(df_train, file = paste0("simdata/train_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+save(df_test, file = paste0("simdata/test_fortrain_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+```
+
+
+# 4.
+```{r}
+set.seed(123)
+
+# Define parameters
+rho <- 0.8
+n_train <- 50
+n_test <- 1000
+pattern_TE <- "clustered"
+r <- 3
+
+# Create lists to store multiple replications
+df_train <- vector("list", r)
+df_test <- vector("list", r)
+
+# Generate 3 replications of training and testing datasets
+for (i in 1:r) {
+  df_train[[i]] <- data_gen(rho, n_train, pattern_TE)  # Generate training data
+  df_test[[i]] <- data_gen(rho, n_test, pattern_TE)  # Generate test data
+}
+
+# Save lists of replications
+save(df_train, file = paste0("simdata/train_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+save(df_test, file = paste0("simdata/test_fortrain_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+```
+
+
+# 5.
+```{r}
+set.seed(123)
+
+# Define parameters
+rho <- 0.2
+n_train <- 75
+n_test <- 1000
+pattern_TE <- "mixed"
+r <- 3
+
+# Create lists to store multiple replications
+df_train <- vector("list", r)
+df_test <- vector("list", r)
+
+# Generate 3 replications of training and testing datasets
+for (i in 1:r) {
+  df_train[[i]] <- data_gen(rho, n_train, pattern_TE)  # Generate training data
+  df_test[[i]] <- data_gen(rho, n_test, pattern_TE)  # Generate test data
+}
+
+# Save lists of replications
+save(df_train, file = paste0("simdata/train_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+save(df_test, file = paste0("simdata/test_fortrain_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+```
+
+# 6.
+```{r}
+set.seed(123)
+
+# Define parameters
+rho <- 0.8
+n_train <- 75
+n_test <- 1000
+pattern_TE <- "mixed"
+r <- 3
+
+# Create lists to store multiple replications
+df_train <- vector("list", r)
+df_test <- vector("list", r)
+
+# Generate 3 replications of training and testing datasets
+for (i in 1:r) {
+  df_train[[i]] <- data_gen(rho, n_train, pattern_TE)  # Generate training data
+  df_test[[i]] <- data_gen(rho, n_test, pattern_TE)  # Generate test data
+}
+
+# Save lists of replications
+save(df_train, file = paste0("simdata/train_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+save(df_test, file = paste0("simdata/test_fortrain_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+```
+
+
+# 7.
+```{r}
+set.seed(123)
+
+# Define parameters
+rho <- 0.2
+n_train <- 50
+n_test <- 1000
+pattern_TE <- "mixed"
+r <- 3
+
+# Create lists to store multiple replications
+df_train <- vector("list", r)
+df_test <- vector("list", r)
+
+# Generate 3 replications of training and testing datasets
+for (i in 1:r) {
+  df_train[[i]] <- data_gen(rho, n_train, pattern_TE)  # Generate training data
+  df_test[[i]] <- data_gen(rho, n_test, pattern_TE)  # Generate test data
+}
+
+# Save lists of replications
+save(df_train, file = paste0("simdata/train_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+save(df_test, file = paste0("simdata/test_fortrain_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+```
+
+
+# 8.
+```{r}
+set.seed(123)
+
+# Define parameters
+rho <- 0.8
+n_train <- 50
+n_test <- 1000
+pattern_TE <- "mixed"
+r <- 3
+
+# Create lists to store multiple replications
+df_train <- vector("list", r)
+df_test <- vector("list", r)
+
+# Generate 3 replications of training and testing datasets
+for (i in 1:r) {
+  df_train[[i]] <- data_gen(rho, n_train, pattern_TE)  # Generate training data
+  df_test[[i]] <- data_gen(rho, n_test, pattern_TE)  # Generate test data
+}
+
+# Save lists of replications
+save(df_train, file = paste0("simdata/train_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+save(df_test, file = paste0("simdata/test_fortrain_n", n_train, "_p", 75, "_corr", rho, "_TE", pattern_TE, ".RData"))
+```
+
+
+# results
+
+```{r}
+load("D:/projpred_vs_spikeslab/output_pilot/df_out/df_out_N50_corr0.2_TEclustered_r1.RData")
+compute_rates(df_out, paste0("X", 1:15), "selected_pred_ppvs_default")
+```
+
+
+```{r}
+load("D:/projpred_vs_spikeslab/output_pilot/ssvs_df_out/ssvs_N50_corr0.2_TEclustered_r1.RData")
+compute_ssvs_rates(ssvs_df_out, paste0("X", 1:15))
 ```
 
 ```{r}
-dat2[ , -1] <- scale(dat2[ , -1])
+load("D:/projpred_vs_spikeslab/output_pilot/df_out/df_out_N50_corr0.2_TEmixed_r1.RData")
+compute_rates(df_out, paste0("X", 1:15), "selected_pred_ppvs_default")
 ```
 
 
 ```{r}
-lm(data = dat2, y ~ .)
+load("D:/projpred_vs_spikeslab/output_pilot/ssvs_df_out/ssvs_N50_corr0.2_TEmixed_r1.RData")
+compute_ssvs_rates(ssvs_df_out, paste0("X", 1:15))
 ```
 
 ```{r}
-refm_fit_p60 <- brm(
-  formula = y ~ ., 
-  data = dat2,  
-  family = gaussian(),  
-  prior = prior(horseshoe(par_ratio = 10/60), class = "b"),  
-  chains = 4, 
-  iter = 2000,
-  seed = seed,
-  backend = "cmdstanr"
- )
-```
-```{r}
-start.time <- Sys.time()
-
-refm_obj_p60 <- get_refmodel(refm_fit_p60)
-
-cvvs_p60 <- cv_varsel(
-  refm_obj_p60,
-  cv_method = "kfold",
-  K = 5,
-  method = "forward",
-  nclusters = 20,
-  ndraws_pred = 400, 
-  # nclusters_pred = 20,
-  nterms_max = 11,
-  seed = seed,
-  verbose = FALSE
-)
-
-end.time <- Sys.time()
-time.taken <- round(end.time - start.time,2)
-time.taken
+mean((prj_linpred_results$y - prj_linpred_results$pred_default)^2)
 ```
 
 
 ```{r}
-plot(cvvs_p60, stats = "mlpd", ranking_nterms_max = NA)
+ssvs_pred <- scale(df_test[[1]][, -1]) %*% ssvs_df_out$`Avg Nonzero Beta`
+mean((ssvs_pred - df_test[[1]][, 1])^2)
 ```
+
+
+
+
+
+
 

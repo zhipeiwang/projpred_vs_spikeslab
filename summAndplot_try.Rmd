@@ -6,54 +6,103 @@ output: html_document
 ---
 # ppvs
 ```{r}
-compute_rates <- function(df_out, true_predictors, heuristic_columns) {
+# compute_rates <- function(df_out, true_predictors, heuristic_columns) {
+#   # Exclude the intercept row
+#   df_out <- df_out[rownames(df_out) != "Intercept", , drop = FALSE]
+#   
+#   # Initialize a named vector to store all rates
+#   rates_vector <- c()
+#   
+#   for (heuristic in heuristic_columns) {
+#     if (all(is.na(df_out[[heuristic]]))) {
+#       # Assign NA to all rates for this heuristic
+#       rates <- c(
+#         true_inclusion = NA,
+#         false_inclusion = NA,
+#         true_exclusion = NA,
+#         false_exclusion = NA
+#       )
+#     } else {
+#       # Get selected predictors
+#       selected_predictors <- rownames(df_out)[df_out[[heuristic]] == 1]
+#       
+#       # Compute rates
+#       true_inclusion <- sum(selected_predictors %in% true_predictors) / length(true_predictors)
+#       false_inclusion <- sum(!(selected_predictors %in% true_predictors)) / (nrow(df_out) - length(true_predictors))
+#       false_exclusion <- sum(!(true_predictors %in% selected_predictors)) / length(true_predictors)
+#       true_exclusion <- {irrelevant_predictors <- rownames(df_out)[!(rownames(df_out) %in% true_predictors)]
+#       excluded_irrelevant_predictors <- irrelevant_predictors[!(irrelevant_predictors %in% selected_predictors)]
+#       length(excluded_irrelevant_predictors) / length(irrelevant_predictors)
+#       }
+# 
+#       
+#       rates <- c(
+#         true_inclusion = true_inclusion,
+#         false_inclusion = false_inclusion,
+#         true_exclusion = true_exclusion,
+#         false_exclusion = false_exclusion
+#       )
+#     }
+#     # Prefix rate names with the heuristic
+#     names(rates) <- paste(heuristic, names(rates), sep = "_")
+#     # Combine rates into the rates_vector
+#     rates_vector <- c(rates_vector, rates)
+#   }
+#   
+#   # Convert rates_vector to a data frame with one row
+#   rates_df <- as.data.frame(t(rates_vector), stringsAsFactors = FALSE)
+#   return(rates_df)
+# }
+
+compute_rates <- function(df_out, true_predictors, heuristic) {
   # Exclude the intercept row
   df_out <- df_out[rownames(df_out) != "Intercept", , drop = FALSE]
   
-  # Initialize a named vector to store all rates
-  rates_vector <- c()
-  
-  for (heuristic in heuristic_columns) {
-    if (all(is.na(df_out[[heuristic]]))) {
-      # Assign NA to all rates for this heuristic
-      rates <- c(
-        true_inclusion = NA,
-        false_inclusion = NA,
-        true_exclusion = NA,
-        false_exclusion = NA
-      )
-    } else {
-      # Get selected predictors
-      selected_predictors <- rownames(df_out)[df_out[[heuristic]] == 1]
-      
-      # Compute rates
-      true_inclusion <- sum(selected_predictors %in% true_predictors) / length(true_predictors)
-      false_inclusion <- sum(!(selected_predictors %in% true_predictors)) / (nrow(df_out) - length(true_predictors))
-      false_exclusion <- sum(!(true_predictors %in% selected_predictors)) / length(true_predictors)
-      true_exclusion <- {irrelevant_predictors <- rownames(df_out)[!(rownames(df_out) %in% true_predictors)]
-      excluded_irrelevant_predictors <- irrelevant_predictors[!(irrelevant_predictors %in% selected_predictors)]
-      length(excluded_irrelevant_predictors) / length(irrelevant_predictors)
-      }
+  if (all(is.na(df_out[[heuristic]]))) {
+    print("Suggest_size failed for this heuristic")
+    
+    # Return NA-filled results instead of failing
+    return(list(
+      confusion_matrix = matrix(NA, nrow = 2, ncol = 2,
+                                dimnames = list("Actual" = c("Non-zero", "Zero"),
+                                                "Predicted" = c("Included", "Excluded"))),
+      true_inclusion_rate = NA,
+      false_inclusion_rate = NA,
+      true_exclusion_rate = NA,
+      false_exclusion_rate = NA
+    ))
+  } 
 
-      
-      rates <- c(
-        true_inclusion = true_inclusion,
-        false_inclusion = false_inclusion,
-        true_exclusion = true_exclusion,
-        false_exclusion = false_exclusion
-      )
-    }
-    # Prefix rate names with the heuristic
-    names(rates) <- paste(heuristic, names(rates), sep = "_")
-    # Combine rates into the rates_vector
-    rates_vector <- c(rates_vector, rates)
-  }
+  selected_predictors <- rownames(df_out)[df_out[[heuristic]] == 1]
   
-  # Convert rates_vector to a data frame with one row
-  rates_df <- as.data.frame(t(rates_vector), stringsAsFactors = FALSE)
-  return(rates_df)
+  # Compute inclusion and exclusion counts
+  true_inclusion <- sum(selected_predictors %in% true_predictors)
+  false_inclusion <- sum(!(selected_predictors %in% true_predictors))
+  false_exclusion <- sum(!(true_predictors %in% selected_predictors))
+  true_exclusion <- sum(!(rownames(df_out) %in% selected_predictors) & !(rownames(df_out) %in% true_predictors))
+
+  # Compute rates
+  true_inclusion_rate <- true_inclusion / length(true_predictors)
+  false_inclusion_rate <- false_inclusion / (nrow(df_out) - length(true_predictors))
+  false_exclusion_rate <- false_exclusion / length(true_predictors)
+  true_exclusion_rate <- true_exclusion / (nrow(df_out) - length(true_predictors))
+
+  # Construct the confusion matrix
+  confusion_matrix <- matrix(
+    c(true_inclusion, false_exclusion, false_inclusion, true_exclusion),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list("Actual" = c("Non-zero", "Zero"), "Predicted" = c("Included", "Excluded"))
+  )
+  
+  return(list(
+    confusion_matrix = confusion_matrix,
+    true_inclusion_rate = true_inclusion_rate,
+    false_inclusion_rate = false_inclusion_rate,
+    true_exclusion_rate = true_exclusion_rate,
+    false_exclusion_rate = false_exclusion_rate
+  ))
 }
-
 
 ```
 
@@ -62,28 +111,28 @@ compute_rates <- function(df_out, true_predictors, heuristic_columns) {
 ## loc_TE = "first10"
 ```{r}
 # List all files in the df_out folder
-df_out_files <- list.files("output/df_out/", full.names = TRUE, pattern = "\\.RData$")
+df_out_files <- list.files("output_study2/ppvs/df_out/", full.names = TRUE, pattern = "\\.RData$")
 
 # Filter files with loc_TE = "first10"
-files_first10 <- df_out_files[grepl("_loc_TEfirst10_", df_out_files)]
+files_first15 <- df_out_files[grepl("_N50_corr0.2_TEclustered_", df_out_files)]
 
 # the true predictors for first10
-true_predictors <- paste0("X", 1:10)
+true_predictors <- paste0("X", 1:15)
 
 # Compute final results
-final_results <- do.call(rbind, lapply(files_first10, function(file_path) {
+final_results <- do.call(rbind, lapply(files_first15, function(file_path) {
   load(file_path)
   # Process df_out and compute rates
   heuristic_columns <- grep("^selected_pred_ppvs_", colnames(df_out), value = TRUE)
   rates <- compute_rates(df_out, true_predictors, heuristic_columns)
   
   # Extract conditions from the filename
-  conditions <- str_match(file_path, "df_out_N(\\d+)_corr([\\d\\.]+)_loc_TE([a-zA-Z0-9]+)_r(\\d+)\\.RData")
+  conditions <- str_match(file_path, "df_out_N(\\d+)_corr([\\d\\.]+)_TE([a-zA-Z0-9]+)_r(\\d+)\\.RData")
   condition_df <- data.frame(
-    N = as.numeric(conditions[, 2]),
-    corr = as.numeric(conditions[, 3]),
-    loc_TE = conditions[, 4],
-    r = as.numeric(conditions[, 5])
+    N = as.numeric(conditions[, 1]),
+    corr = as.numeric(conditions[, 2]),
+    TE = conditions[, 3],
+    r = as.numeric(conditions[, 4])
   )
   
   # Combine conditions with rates
@@ -343,16 +392,40 @@ print(mean_rates_ppvs_cat_uncorrTE)
 ```{r}
 compute_ssvs_rates <- function(ssvs_df_out, true_predictors) {
   selected_predictors <- ssvs_df_out$Variable[ssvs_df_out$selected_pred_ssvs == 1]
-  true_inclusion <- sum(selected_predictors %in% true_predictors) / length(true_predictors)
-  false_inclusion <- sum(!(selected_predictors %in% true_predictors)) / (nrow(ssvs_df_out) - length(true_predictors))
-  false_exclusion <- sum(!(true_predictors %in% selected_predictors)) / length(true_predictors)
-  true_exclusion <- sum(!(ssvs_df_out$Variable %in% selected_predictors) & !(ssvs_df_out$Variable %in% true_predictors)) / 
-    (nrow(ssvs_df_out) - length(true_predictors))
   
-  return(c(true_inclusion = true_inclusion,
-           false_inclusion = false_inclusion,
-           true_exclusion = true_exclusion,
-           false_exclusion = false_exclusion))
+  # Calculate inclusion and exclusion counts
+  true_inclusion <- sum(selected_predictors %in% true_predictors)
+  false_inclusion <- sum(!(selected_predictors %in% true_predictors))
+  false_exclusion <- sum(!(true_predictors %in% selected_predictors))
+  true_exclusion <- sum(!(ssvs_df_out$Variable %in% selected_predictors) & !(ssvs_df_out$Variable %in% true_predictors))
+  
+  # Calculate rates
+  true_inclusion_rate <- true_inclusion / length(true_predictors)
+  false_inclusion_rate <- false_inclusion / (nrow(ssvs_df_out) - length(true_predictors))
+  false_exclusion_rate <- false_exclusion / length(true_predictors)
+  true_exclusion_rate <- true_exclusion / (nrow(ssvs_df_out) - length(true_predictors))
+  
+  # Construct the confusion matrix
+  confusion_matrix <- matrix(
+    c(true_inclusion, false_exclusion, false_inclusion, true_exclusion),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list("Actual" = c("Non-zero", "Zero"), "Predicted" = c("Included", "Excluded"))
+  )
+  
+  # Print rates
+  cat("\nTrue Inclusion Rate:", round(true_inclusion_rate, 3))
+  cat("\nFalse Inclusion Rate:", round(false_inclusion_rate, 3))
+  cat("\nTrue Exclusion Rate:", round(true_exclusion_rate, 3))
+  cat("\nFalse Exclusion Rate:", round(false_exclusion_rate, 3), "\n")
+
+  return(list(
+    confusion_matrix = confusion_matrix,
+    true_inclusion_rate = true_inclusion_rate,
+    false_inclusion_rate = false_inclusion_rate,
+    true_exclusion_rate = true_exclusion_rate,
+    false_exclusion_rate = false_exclusion_rate
+  ))
 }
 
 ```

@@ -1,0 +1,99 @@
+---
+title: "Reflections on Giving Statistical Consultation"
+author: "Kim (Zhipei) Wang"
+format:
+  revealjs:
+    slide-number: true
+    transition: slide
+embed-resources: true
+---
+
+
+## Before the Consultation
+
+- Attended the workshop
+- Observed a consultation first
+- But real consultations were still unexpected
+- First session: solo, a bit chaotic
+
+---
+
+## Client's Question
+
+- Research topic:
+  - Conflict & closeness with teacher (T1) → Language performance (T1, T2)
+  - Gender as moderator
+- Main concern:
+  - Missing values in the dataset
+  - Inconsistent outputs from SPSS
+
+---
+
+## Mismatch of Expectations
+
+- What I expected:
+  - General stats questions
+- What the client expected:
+  - SPSS walkthrough
+
+> Result: awkward atmosphere when expectations didn’t match
+
+---
+
+## The “NA” Moment
+
+- I used "NA" repeatedly
+
+::: {.incremental}
+- She finally asked: *"Sorry… what is NA?"*
+- I realized I assumed too much  
+- She didn’t feel safe asking earlier
+:::
+
+---
+
+## What I Learned
+
+- Don’t assume prior knowledge
+- Say upfront:
+  - *"Stop me anytime if something’s unclear"*
+- Check in regularly:
+  - ✅ *"Was that clear?"*
+  - ✅ *"Should I explain that a bit more?"*
+- Avoid intimidating phrasing:
+  - ❌ *"Do you get it?"*
+  - ❌ *"Are you still following?"*
+
+---
+
+## SPSS: To Help or Not to Help?
+
+- Not supposed to do analyses for clients
+- But she was stuck
+- Eventually I helped with SPSS
+- Still unsure: where’s the boundary?
+
+---
+
+## Session Went Over Time
+
+- Scheduled: 45 min
+- Actual: ~90 min
+- Client was anxious
+- I couldn’t send her away like that
+
+
+---
+
+## Supervisor Said: Do a t-test?
+
+- No clear explanation why
+- Didn't seem meaningful
+- Client wanted to "just do it" for her thesis
+- What should we do when clients are told to do unclear analyses?
+---
+
+## Questions / Discussion
+
+> Thank you!
+

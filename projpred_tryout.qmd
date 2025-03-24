@@ -531,20 +531,23 @@ print(paste("The suggested model size based on MLPD using 10-fold-CV is", sugges
 # print(confusion_matrix)
 ```
 
+
 ```{r}
-calculate_inclusion_metrics <- function(selected_predictors, true_predictors, total_predictors = 50) {
-  # Calculate the number of predictors
-  true_inclusion <- sum(selected_predictors %in% true_predictors)                    # Correctly included
-  false_inclusion <- sum(!(selected_predictors %in% true_predictors))                # Incorrectly included
-  false_exclusion <- sum(true_predictors %in% true_predictors & 
-                         !(true_predictors %in% selected_predictors))                # Incorrectly excluded
-  true_exclusion <- total_predictors - true_inclusion - false_inclusion - false_exclusion  # Correctly excluded
+calculate_inclusion_metrics <- function(selected_predictors, true_predictors, total_predictors = 75) {
+  # Identify irrelevant predictors
+  irrelevant_predictors <- paste0("X", 1:15)[!(paste0("X", 1:total_predictors) %in% true_predictors)]  # Predictors that should be excluded
+
+  # Calculate inclusion and exclusion counts
+  true_inclusion <- sum(selected_predictors %in% true_predictors)   # Correctly included
+  false_inclusion <- sum(!(selected_predictors %in% true_predictors))  # Incorrectly included
+  false_exclusion <- sum(true_predictors %in% true_predictors & !(true_predictors %in% selected_predictors))  # Incorrectly excluded
+  true_exclusion <- sum(!(irrelevant_predictors %in% selected_predictors))  # Correctly excluded
 
   # Calculate rates
-  true_inclusion_rate <- true_inclusion / length(true_predictors)                    # Proportion of true predictors correctly included
-  false_inclusion_rate <- false_inclusion / (total_predictors - length(true_predictors))  # Proportion of irrelevant predictors incorrectly included
-  true_exclusion_rate <- true_exclusion / (total_predictors - length(true_predictors))    # Proportion of irrelevant predictors correctly excluded
-  false_exclusion_rate <- false_exclusion / length(true_predictors)                  # Proportion of true predictors incorrectly excluded
+  true_inclusion_rate <- true_inclusion / length(true_predictors)  # Proportion of true predictors correctly included
+  false_inclusion_rate <- false_inclusion / length(irrelevant_predictors)  # Proportion of irrelevant predictors incorrectly included
+  true_exclusion_rate <- true_exclusion / length(irrelevant_predictors)  # Proportion of irrelevant predictors correctly excluded
+  false_exclusion_rate <- false_exclusion / length(true_predictors)  # Proportion of true predictors incorrectly excluded
 
   # Construct the confusion matrix
   confusion_matrix <- matrix(
@@ -570,6 +573,42 @@ calculate_inclusion_metrics <- function(selected_predictors, true_predictors, to
 }
 
 ```
+
+```{r}
+calculate_inclusion_metrics <- function(selected_predictors, true_predictors, total_predictors = 75) {
+  
+  # Calculate the number of predictors
+  true_inclusion <- sum(selected_predictors %in% true_predictors)                    # Correctly included
+  false_inclusion <- sum(!(selected_predictors %in% true_predictors))                # Incorrectly included
+  false_exclusion <- sum(true_predictors %in% true_predictors & 
+                         !(true_predictors %in% selected_predictors))                # Incorrectly excluded
+  true_exclusion <- total_predictors - true_inclusion - false_inclusion - false_exclusion  # Correctly excluded
+
+  # Calculate rates
+  true_inclusion_rate <- true_inclusion / length(true_predictors)                    # Proportion of true predictors correctly included
+  false_inclusion_rate <- false_inclusion / (total_predictors - length(true_predictors))  # Proportion of irrelevant predictors incorrectly included
+  true_exclusion_rate <- true_exclusion / (total_predictors - length(true_predictors))    # Proportion of irrelevant predictors correctly excluded
+  false_exclusion_rate <- false_exclusion / length(true_predictors)                  # Proportion of true predictors incorrectly excluded
+
+  # Construct the confusion matrix
+  confusion_matrix <- matrix(
+    c(true_inclusion, false_exclusion, false_inclusion, true_exclusion),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list("Actual" = c("Non-zero", "Zero"), "Predicted" = c("Included", "Excluded"))
+  )
+
+  return(list(
+    confusion_matrix = confusion_matrix,
+    true_inclusion_rate = true_inclusion_rate,
+    false_inclusion_rate = false_inclusion_rate,
+    true_exclusion_rate = true_exclusion_rate,
+    false_exclusion_rate = false_exclusion_rate
+  ))
+}
+
+```
+
 
 
 ```{r}

@@ -1,0 +1,1598 @@
+---
+title: "study2Analysis"
+format: html
+---
+```{r}
+library(stringr)
+library(dplyr)
+library(purrr)
+library(ggplot2)
+library(tidyr)
+```
+
+# ppvs rates
+```{r}
+# List all df_out files
+df_out_files <- list.files("output_study2/ppvs/df_out/", pattern = "^df_out_", full.names = TRUE)
+
+# Function to read and process a single df_out file
+read_df_out <- function(file_path) {
+  load(file_path)  # Loads df_out
+  
+  # Extract metadata from filename
+  metadata <- tibble(
+    N = as.numeric(str_extract(file_path, "(?<=df_out_N)\\d+")),
+    corr = as.numeric(str_extract(file_path, "(?<=_corr)0\\.\\d+")),
+    TE = str_extract(file_path, "(?<=_TE)[a-z]+"),
+    r = as.numeric(str_extract(file_path, "(?<=_r)\\d+"))
+  )
+  
+  # Convert df_out to tibble, keeping rownames as a column
+  df_out <- as_tibble(df_out, rownames = "Variable")
+  
+  # Remove the intercept row
+  df_out <- df_out %>% filter(Variable != "Intercept")
+  
+  # Attach metadata columns to df_out
+  df_out <- df_out %>% mutate(N = metadata$N, corr = metadata$corr, TE = metadata$TE, r = metadata$r)
+  
+  return(df_out)
+}
+
+# Apply function to all files and combine into one big dataframe
+all_df_out <- bind_rows(lapply(df_out_files, read_df_out))
+
+# View structure of the final dataframe
+glimpse(all_df_out)
+head(all_df_out)
+```
+
+```{r}
+# Function to determine true predictors based on TE
+get_true_predictors <- function(TE) {
+  if (TE == "clustered") {
+    return(paste0("X", 1:15))
+  } else if (TE == "mixed") {
+    return(paste0("X", seq(1, 75, 5)))
+  } else {
+    stop("Unexpected TE value!")
+  }
+}
+
+compute_rates_from_df <- function(df, heuristics) {
+
+  true_predictors <- get_true_predictors(df$TE[1])
+
+  results <- list()
+
+  for (heuristic in heuristics) {
+    # Check if the heuristic failed (all values are NA)
+    if (all(is.na(df[[heuristic]]))) {
+      # Return NA-filled results for this heuristic
+      results[[heuristic]] <- tibble(
+        N = df$N[1],
+        corr = df$corr[1],
+        TE = df$TE[1],
+        r = df$r[1],
+        heuristic = heuristic,
+        true_inclusion_rate = NA,
+        false_inclusion_rate = NA,
+        false_exclusion_rate = NA,
+        true_exclusion_rate = NA
+      )
+      next  # Skip to the next heuristic
+    }
+
+    # Identify selected predictors for this heuristic
+    selected_predictors <- df$Variable[df[[heuristic]] == 1]
+
+    # Compute inclusion/exclusion counts
+    true_inclusion <- sum(selected_predictors %in% true_predictors)
+    false_inclusion <- sum(!(selected_predictors %in% true_predictors))
+    false_exclusion <- sum(!(true_predictors %in% selected_predictors))
+    true_exclusion <- sum(!(df$Variable %in% selected_predictors) & !(df$Variable %in% true_predictors))
+
+    # Compute rates
+    true_inclusion_rate <- true_inclusion / length(true_predictors)
+    false_inclusion_rate <- false_inclusion / (nrow(df) - length(true_predictors))
+    false_exclusion_rate <- false_exclusion / length(true_predictors)
+    true_exclusion_rate <- true_exclusion / (nrow(df) - length(true_predictors))
+
+    # Store results in a long format
+    results[[heuristic]] <- tibble(
+      N = df$N[1],
+      corr = df$corr[1],
+      TE = df$TE[1],
+      r = df$r[1],
+      heuristic = heuristic,
+      true_inclusion_rate = true_inclusion_rate,
+      false_inclusion_rate = false_inclusion_rate,
+      false_exclusion_rate = false_exclusion_rate,
+      true_exclusion_rate = true_exclusion_rate
+    )
+  }
+
+  return(bind_rows(results))
+}
+
+```
+
+```{r}
+heuristics <- c("selected_pred_ppvs_default", 
+                "selected_pred_ppvs_lower", 
+                "selected_pred_ppvs_thres_upper", 
+                "selected_pred_ppvs_thres_lower")  # Add more heuristics if needed
+
+all_rates_long <- all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  group_split() %>%
+  map_dfr(~ compute_rates_from_df(.x, heuristics))
+glimpse(all_rates_long)
+```
+
+
+# ppvs convergence
+```{r}
+all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  summarise(n_div = unique(div),
+            .groups = "drop") %>%
+  ggplot(aes(x = factor(N), y = n_div)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.5) +
+  theme_minimal() +
+  facet_grid(corr ~ TE)
+
+all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  summarise(n_div = unique(div), .groups = "drop") %>%
+  group_by(N, corr, TE) %>%
+  summarise(
+    mean_div = mean(n_div),
+    median_div = median(n_div),
+    sd_div = sd(n_div),
+    min_div = min(n_div),
+    max_div = max(n_div),
+    .groups = "drop"
+  )
+
+
+all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  summarise(perc_div = unique(div) * 100 / 4000, .groups = "drop") %>%
+  group_by(N, corr, TE) %>%
+  summarise(
+    mean_perc = mean(perc_div),
+    median_perc = median(perc_div),
+    sd_perc = sd(perc_div),
+    min_perc = min(perc_div),
+    max_perc = max(perc_div),
+    .groups = "drop"
+  )
+
+all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  summarise(perc_div = unique(div) * 100 / 4000, .groups = "drop") %>%
+  filter(N == 50, corr == 0.2, TE == "mixed") %>%
+  arrange(desc(perc_div))
+
+nonconver_reps <- all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  summarise(n_div = unique(div),
+            perc_div = unique(div) * 100 / 4000, 
+            n_Rhat = sum(Rhat > 1.1),
+            .groups = "drop") %>%
+  filter(n_Rhat != 0) %>% select(r)
+```
+
+Convergence is checked from two aspects. First the convergence when the reference model using the regularized horseshoe prior for projpred is built, second when the suggest_size function in the PPVS package is used.
+First looking at the convergence of the reference model. The convergence is checked looking at Rhat (more description and reference since this is what the checking mostly based on) and the number of divergent transitions. Using the regularized horseshoe inevitably gives divergent transitions for almost all the replications, so the number of divergent transitions and Rhat are used together to check convergence. The statistics of the percentage of the number of divergent transitions in different conditions across replications can be found in the table(). For Rhat, for each replication, the Rhat for each parameter is checked to see if it is larger than 1.1, and the counts of the parameters having Rhat larger than 1.1 are recorded. Replications having counts larger than 0 are filtered, and 4 replications from different conditions are left after filtering, suggesting that they are the replications with problematic convergence. The percentage of divergent transitions also corroborates that. Those replications are thus not included in the later analyses.  
+
+Moving to where the suggest_size function fails. This is not really about model convergence but it is a big problem in our study which cannot be ignored and deserves to be discussed separately. As mentioned in the simulation study section, suggest_size was used to automate the process. Also, the maximum number of predictors selected was limited to 16 as we generated 15 truely relevant predictors. So, it is not weird that, the submodel sizes determined finally in the cross-validation objects were not able to be sufficiently close to the reference model. As the suggest size heuristics we used impose certain requirements asking the submodel to be close enough to the reference model and it cannot be changed according to different situations for the purpose of automating the process, the suggest_size function inevitably fails and returns an error when no submodel sizes can be found which satisfies our criterion. When we are not in a setting where we conduct simluation studies where we want to automate the process, one can mannually inspect the visualization of the predictive performance along search path or the ranking proportions to determine the submodel size when sugges_size returns an error.
+Clearly, the SE heuristic lower bound is giving a lot more NAs than the other heuristics acorss all the conditions, because it is the most conservative heuristic asking for high confidence that the submodel is at least as good as the baseline model. So the worst-case utility and tends to select a larger submodel size when it's possible and fails and gives error when it is not possible. In every condition, the number of NAs exceeds 50, and most of the time the counts are more than 75, indicating that the analysis based on this heuristic is unreliable. Neverthless, the results from this heuristic is kept for analysis before we can fully rule it out. Overall, more NAs can be seen in the smaller sample size N = 50 conditions, with the exception for when corr = 0.8 for the SE lower bound heuristic (I don't understand why). When the true effects are mixed, generally there are more NAs than when the true effects are clustered, especially when the correlation is high. When the true effects are clustered, having lower corr gives more NAs, while when the true effects are mixed, having higher corr gives more NAs.
+
+References to be checked and added:
+https://mc-stan.org/docs/reference-manual/analysis.html#effective-sample-size.section
+https://mc-stan.org/learn-stan/diagnostics-warnings.html
+https://arxiv.org/abs/1701.02434
+https://stats.stackexchange.com/questions/432479/divergent-transitions-in-stan
+https://dev.to/martinmodrak/taming-divergences-in-stan-models-5762
+https://michael-franke.github.io/Bayesian-Regression/practice-sheets/05b-divergences.html
+https://livefull.github.io/
+
+# ppvs NA visualization
+
+```{r}
+ggplot(summary_na, aes(x = heuristic, y = na_count, fill = factor(N))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_grid(TE ~ corr) +
+  labs(
+    title = "Number of NAs per Heuristic and Condition",
+    x = "Heuristic",
+    y = "NA Count",
+    fill = "N"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(summary_na, aes(x = heuristic, y = na_count, fill = factor(TE))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_grid(N ~ corr) +
+  labs(
+    title = "Number of NAs per Heuristic and Condition",
+    x = "Heuristic",
+    y = "NA Count",
+    fill = "TE"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(summary_na, aes(x = heuristic, y = na_count, fill = factor(corr))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_grid(N ~ TE) +
+  labs(
+    title = "Number of NAs per Heuristic and Condition",
+    x = "Heuristic",
+    y = "NA Count",
+    fill = "corr"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+# counts
+```{r}
+# counts, number of selected variables by heuristic
+ppvs_counts <- all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  summarise(default = sum(selected_pred_ppvs_default == 1),
+            lower = sum(selected_pred_ppvs_lower == 1),
+            thres_upper = sum(selected_pred_ppvs_thres_upper == 1), 
+            thres_lower = sum(selected_pred_ppvs_thres_lower == 1),
+            .groups = "drop") %>%
+  pivot_longer(cols = c(default, lower, thres_upper, thres_lower), 
+               names_to = "heuristic", 
+               values_to = "n_selected")
+
+ssvs_counts <- all_ssvs_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  summarise(n_selected = sum(selected_pred_ssvs == 1),
+            .groups = "drop") %>%
+  mutate(heuristic = "SSVS")
+
+combined_counts <- bind_rows(ppvs_counts, ssvs_counts)
+combined_counts
+```
+
+
+# ppvs heuristics checking
+```{r}
+# thres_lower vs thres_upper heuristics
+
+# for how many replications did thres_upper and thres_lower just gave the same selection of predictors (where they aren't the same, most of the time they are just NAs where at least one of them failed)
+all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  summarise(
+    agreement = all(selected_pred_ppvs_thres_upper == selected_pred_ppvs_thres_lower),
+    .groups = "drop"
+  ) %>%
+  group_by(N, corr, TE) %>%
+  summarise(
+    n_agree = sum(agreement, na.rm = TRUE),               # how many replications had full agreement
+    n_NA = sum(is.na(agreement)),
+    total_replications = n(),
+    .groups = "drop"
+  )
+```
+
+
+# ssvs rates
+```{r}
+# List all ssvs_df_out files
+ssvs_files <- list.files("output_study2/ssvs/ssvs_df_out/", pattern = "^ssvs_N", full.names = TRUE)
+
+# Extract condition details from filenames
+ssvs_conditions <- tibble(
+  file = ssvs_files,
+  N = as.numeric(str_extract(ssvs_files, "(?<=ssvs_N)\\d+")),
+  corr = as.numeric(str_extract(ssvs_files, "(?<=_corr)0\\.\\d+")),
+  TE = str_extract(ssvs_files, "(?<=_TE)[a-z]+"),
+  r = as.numeric(str_extract(ssvs_files, "(?<=_r)\\d+"))
+)
+
+# Function to load and append metadata
+load_ssvs_df_out <- function(file_path) {
+  load(file_path)  # This loads `ssvs_df_out`
+  
+  # Extract condition metadata
+  condition <- ssvs_conditions %>% filter(file == file_path)
+  
+  # Remove the intercept row
+  ssvs_df_out <- ssvs_df_out %>% filter(Variable != "Intercept")
+  
+  # Add metadata columns (N, corr, TE, r)
+  ssvs_df_out <- ssvs_df_out %>%
+    mutate(N = condition$N,
+           corr = condition$corr,
+           TE = condition$TE,
+           r = condition$r)
+  
+  return(ssvs_df_out)
+}
+
+# Apply function to all files and combine them into one dataframe
+all_ssvs_df_out <- bind_rows(lapply(ssvs_files, load_ssvs_df_out))
+head(all_ssvs_df_out)
+```
+
+
+```{r}
+compute_ssvs_rates <- function(df) {
+
+  true_predictors <- get_true_predictors(df$TE[1])
+
+  # Identify selected predictors
+  selected_predictors <- df$Variable[df$selected_pred_ssvs == 1]
+
+  # Compute counts
+  true_inclusion <- sum(selected_predictors %in% true_predictors)
+  false_inclusion <- sum(!(selected_predictors %in% true_predictors))
+  false_exclusion <- sum(!(true_predictors %in% selected_predictors))
+  true_exclusion <- sum(!(df$Variable %in% selected_predictors) & !(df$Variable %in% true_predictors))
+
+  # Compute rates
+  true_inclusion_rate <- true_inclusion / length(true_predictors)
+  false_inclusion_rate <- false_inclusion / (nrow(df) - length(true_predictors))
+  false_exclusion_rate <- false_exclusion / length(true_predictors)
+  true_exclusion_rate <- true_exclusion / (nrow(df) - length(true_predictors))
+
+  return(tibble(
+    N = df$N[1],
+    corr = df$corr[1],
+    TE = df$TE[1],
+    r = df$r[1],
+    true_inclusion_rate = true_inclusion_rate,
+    false_inclusion_rate = false_inclusion_rate,
+    false_exclusion_rate = false_exclusion_rate,
+    true_exclusion_rate = true_exclusion_rate
+  ))
+}
+
+
+all_ssvs_rates <- all_ssvs_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  group_split() %>%
+  map_dfr(compute_ssvs_rates)
+
+print(all_ssvs_rates)
+
+```
+
+# combine rates
+```{r}
+# Add method column to both datasets
+all_rates_long <- all_rates_long %>%
+  mutate(method = "PPVS")
+
+all_ssvs_rates <- all_ssvs_rates %>%
+  mutate(method = "SSVS",
+         heuristic = "SSVS")  # Ensure heuristic column exists
+
+# Combine both datasets
+combined_rates <- bind_rows(all_rates_long, all_ssvs_rates)
+
+combined_rates <- combined_rates %>%
+  mutate(method = factor(method))
+
+# View structure to check
+glimpse(combined_rates)
+head(combined_rates)
+```
+
+
+# four rates different facets
+```{r}
+combined_rates %>%
+  filter(!(r %in% nonconver_reps$r)) %>%
+  ggplot(aes(x = factor(N), y = true_inclusion_rate, fill = heuristic)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_grid(TE ~ corr) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions",
+       x = "N",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+combined_rates %>%
+  filter(!(r %in% nonconver_reps$r)) %>%
+  ggplot(aes(x = factor(N), y = false_inclusion_rate, fill = heuristic)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_grid(TE ~ corr) +
+  theme_minimal() +
+  labs(title = "False Inclusion Rate cross conditions",
+       x = "N",
+       y = "False Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# combined_rates %>%
+#   filter(!(r %in% nonconver_reps$r)) %>%
+#   ggplot(aes(x = factor(N), y = true_exclusion_rate, fill = heuristic)) +
+#   geom_boxplot(alpha = 0.7) +
+#   facet_grid(TE ~ corr) +
+#   theme_minimal() +
+#   labs(title = "True exclusion Rate cross conditions",
+#        x = "N",
+#        y = "True exclusion Rate") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# 
+# combined_rates %>%
+#   filter(!(r %in% nonconver_reps$r)) %>%
+#   ggplot(aes(x = factor(N), y = false_exclusion_rate, fill = heuristic)) +
+#   geom_boxplot(alpha = 0.7) +
+#   facet_grid(TE ~ corr) +
+#   theme_minimal() +
+#   labs(title = "False exclusion Rate cross conditions",
+#        x = "N",
+#        y = "False exclusion Rate") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+combined_rates %>%
+  filter(!(r %in% nonconver_reps$r)) %>%
+  ggplot(aes(x = factor(TE), y = true_inclusion_rate, fill = heuristic)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_grid(N ~ corr) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions",
+       x = "TE",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+combined_rates %>%
+  filter(!(r %in% nonconver_reps$r)) %>%
+  ggplot(aes(x = factor(TE), y = false_inclusion_rate, fill = heuristic)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_grid(N ~ corr) +
+  theme_minimal() +
+  labs(title = "False Inclusion Rate cross conditions",
+       x = "TE",
+       y = "False Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# ggplot(combined_rates, aes(x = factor(TE), y = true_exclusion_rate, fill = heuristic)) +
+#   geom_boxplot(alpha = 0.7) +
+#   facet_grid(N ~ corr) +
+#   theme_minimal() +
+#   labs(title = "True exclusion Rate cross conditions",
+#        x = "TE",
+#        y = "True exclusion Rate") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# 
+# ggplot(combined_rates, aes(x = factor(TE), y = false_exclusion_rate, fill = heuristic)) +
+#   geom_boxplot(alpha = 0.7) +
+#   facet_grid(N ~ corr) +
+#   theme_minimal() +
+#   labs(title = "False exclusion Rate cross conditions",
+#        x = "TE",
+#        y = "False exclusion Rate") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+```{r}
+combined_rates %>%
+  filter(!(r %in% nonconver_reps$r)) %>%
+  ggplot(aes(x = factor(corr), y = true_inclusion_rate, fill = heuristic)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_grid(N ~ TE) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions",
+       x = "corr",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+combined_rates %>%
+  filter(!(r %in% nonconver_reps$r)) %>%
+  ggplot(aes(x = factor(corr), y = false_inclusion_rate, fill = heuristic)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_grid(N ~ TE) +
+  theme_minimal() +
+  labs(title = "False Inclusion Rate cross conditions",
+       x = "corr",
+       y = "False Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# ggplot(combined_rates, aes(x = factor(corr), y = true_exclusion_rate, fill = heuristic)) +
+#   geom_boxplot(alpha = 0.7) +
+#   facet_grid(N ~ TE) +
+#   theme_minimal() +
+#   labs(title = "True exclusion Rate cross conditions",
+#        x = "corr",
+#        y = "True exclusion Rate") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# 
+# ggplot(combined_rates, aes(x = factor(corr), y = false_exclusion_rate, fill = heuristic)) +
+#   geom_boxplot(alpha = 0.7) +
+#   facet_grid(N ~ TE) +
+#   theme_minimal() +
+#   labs(title = "False exclusion Rate cross conditions",
+#        x = "corr",
+#        y = "False exclusion Rate") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# true inclusion rates different faceting
+```{r}
+combined_rates %>%
+  filter(!(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_upper"))) %>%
+  ggplot(aes(x = factor(N), y = true_inclusion_rate, fill = heuristic)) + 
+  geom_boxplot(alpha = 0.7) +
+  facet_grid(TE ~ corr) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions",
+       x = "N",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+combined_rates %>%
+  filter(!(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_upper"))) %>%
+  ggplot(aes(x = factor(corr), y = true_inclusion_rate, fill = heuristic)) + 
+  geom_boxplot(alpha = 0.7) +
+  facet_grid(N ~ TE) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions",
+       x = "corr",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+combined_rates %>%
+  filter(!(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_upper"))) %>%
+  ggplot(aes(x = factor(TE), y = true_inclusion_rate, fill = heuristic)) + 
+  geom_boxplot(alpha = 0.7) +
+  facet_grid(corr ~ N) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions",
+       x = "TE",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+# one condition, true inclusion rates
+```{r}
+combined_rates %>%
+  filter(N == 50, corr == 0.8, TE == "mixed", !(r %in% nonconver_reps)) %>%
+  group_by(heuristic) %>%
+  summarise(mean_true_inclusion = mean(true_inclusion_rate, na.rm = TRUE),
+            sd_true_inclusion = sd(true_inclusion_rate, na.rm = TRUE),
+            n_noneselected = sum(true_inclusion_rate == 0, na.rm = TRUE))
+
+combined_rates %>%
+  filter(N == 50, corr == 0.8, TE == "mixed", !(r %in% nonconver_reps$r)) %>%
+  ggplot(aes(x = true_inclusion_rate, fill = heuristic)) + 
+  geom_density(alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions",
+       x = "TE",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+# one condition, different rates
+```{r}
+combined_rates %>%
+  filter(N == 75, corr == 0.8, TE == "mixed") %>%
+  group_by(heuristic) %>%
+  summarise(mean_true_inclusion = mean(true_inclusion_rate, na.rm = TRUE),
+            sd_true_inclusion = sd(true_inclusion_rate, na.rm = TRUE),
+            n_noneselected = sum(true_inclusion_rate == 0, na.rm = TRUE))
+
+combined_rates %>%
+  filter(N == 75, corr == 0.8, TE == "mixed") %>%
+  ggplot(aes(x = true_inclusion_rate, fill = heuristic)) + 
+  geom_density(alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions",
+       x = "TE",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+# filtering the replications where the lower threshold worked
+combined_rates %>%
+  # First remove non-converged reps
+  filter(!(r %in% nonconver_reps$r)) %>%
+  
+  # Then filter for reps where 'lower' heuristic worked
+  semi_join(
+    combined_rates %>%
+      filter(heuristic == "selected_pred_ppvs_lower", !is.na(true_inclusion_rate)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+
+  filter(heuristic != "selected_pred_ppvs_thres_lower") %>%
+  ggplot(aes(x = factor(N), y = true_inclusion_rate, fill = heuristic)) +
+  geom_boxplot(alpha = 0.7) +  
+  stat_summary(fun = mean, geom = "point", shape = 20, size = 3, color = "black", position = position_dodge(width = 0.75)) +
+  facet_grid(TE ~ corr) +  
+  labs(title = "True inclusion rate Across Conditions", 
+       x = "N", 
+       y = "true inclusion rate") +
+  theme_minimal()
+
+
+# combined_rates %>%
+#   filter(!(r %in% nonconver_reps$r)) %>%
+#   semi_join(
+#     combined_rates %>%
+#       filter(heuristic == "selected_pred_ppvs_lower", !is.na(true_inclusion_rate)) %>%
+#       select(N, corr, TE, r),
+#     by = c("N", "corr", "TE", "r")
+#   ) %>%
+#   filter(heuristic != "selected_pred_ppvs_thres_lower") %>%
+#   group_by(N, corr, TE, heuristic) %>%
+#   summarise(
+#     mean_rate = mean(true_inclusion_rate, na.rm = TRUE),
+#     sd_rate = sd(true_inclusion_rate, na.rm = TRUE),
+#     .groups = "drop"
+#   ) %>%
+#   ggplot(aes(x = factor(N), y = mean_rate, fill = heuristic)) +
+#   geom_col(position = "dodge") +
+#   geom_errorbar(aes(ymin = mean_rate - sd_rate, ymax = mean_rate + sd_rate),
+#                 position = position_dodge(0.9), width = 0.3) +
+#   facet_grid(TE ~ corr) +
+#   labs(title = "Mean True Inclusion Rate with SD", y = "Mean True Inclusion Rate", x = "N") +
+#   theme_minimal()
+# 
+# 
+# 
+# combined_rates %>%
+#   # First remove non-converged reps
+#   filter(!(r %in% nonconver_reps$r)) %>%
+#   
+#   # Then filter for reps where 'lower' heuristic worked
+#   semi_join(
+#     combined_rates %>%
+#       filter(heuristic == "selected_pred_ppvs_lower", !is.na(true_inclusion_rate)) %>%
+#       select(N, corr, TE, r),
+#     by = c("N", "corr", "TE", "r")
+#   ) %>%
+# 
+#   filter(heuristic != "selected_pred_ppvs_thres_lower") %>%
+#   group_by(N, corr, TE, heuristic) %>%
+#   summarise(mean_true_inclusion_rate = mean(true_inclusion_rate), .groups = "drop")
+```
+
+
+```{r}
+summary_na[summary_na$heuristic == "selected_pred_ppvs_lower", ]
+```
+
+```{r}
+# filtering the replications where the lower threshold worked
+combined_counts %>%
+  # First remove non-converged reps
+  filter(!(r %in% nonconver_reps$r)) %>%
+  
+  # Then filter for reps where 'lower' heuristic worked
+  semi_join(
+    combined_counts %>%
+      filter(heuristic == "lower", !is.na(n_selected)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+
+  filter(heuristic != "thres_lower") %>%
+  ggplot(aes(x = factor(N), y = n_selected, fill = heuristic)) +
+  geom_boxplot(alpha = 0.7) +  
+  facet_grid(TE ~ corr) +  
+  labs(title = "Counts of selected predictors Across Conditions", 
+       x = "N", 
+       y = "Count") +
+  theme_minimal()
+```
+
+```{r}
+combined_rates %>%
+  # First remove non-converged reps
+  filter(!(r %in% nonconver_reps$r)) %>%
+  
+  # Then filter for reps where 'lower' heuristic worked
+  semi_join(
+    combined_rates %>%
+      filter(heuristic == "selected_pred_ppvs_lower", !is.na(false_inclusion_rate)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+
+  filter(heuristic != "selected_pred_ppvs_thres_lower") %>%
+  ggplot(aes(x = factor(N), y = false_inclusion_rate, fill = heuristic)) +
+  geom_boxplot(alpha = 0.7) +  
+  stat_summary(fun = mean, geom = "point", shape = 20, size = 3, color = "black", position = position_dodge(width = 0.75)) +
+  facet_grid(TE ~ corr) +  
+  labs(title = "False inclusion rate Across Conditions", 
+       x = "N", 
+       y = "false inclusion rate") +
+  theme_minimal()
+```
+
+
+# ppvs rates by effect size
+```{r}
+assign_effect_sizes <- function(TE) {
+  if (TE == "clustered") {
+    c(rep("large", 5), rep("medium", 5), rep("small", 5), rep("null", 60))
+  } else if (TE == "mixed") {
+    true_predictors <- seq(1, 75, 5)  # X1, X6, X11, ..., X71
+    effect_sizes <- rep("null", 75)
+    effect_sizes[true_predictors[1:5]] <- "large"
+    effect_sizes[true_predictors[6:10]] <- "medium"
+    effect_sizes[true_predictors[11:15]] <- "small"
+    return(effect_sizes)
+  } else {
+    stop("Unknown TE value")
+  }
+}
+
+compute_rates_by_effect_size <- function(df, heuristics) {
+  results <- list()
+
+  for (heuristic in heuristics) {
+    if (all(is.na(df[[heuristic]]))) {
+      # Return NA rows for each effect size category
+      effect_levels <- c("large", "medium", "small", "null")
+      na_results <- tibble(
+        N = df$N[1],
+        corr = df$corr[1],
+        TE = df$TE[1],
+        r = df$r[1],
+        heuristic = heuristic,
+        effect_size = effect_levels,
+        inclusion_rate = NA_real_
+      )
+      results[[heuristic]] <- na_results
+      next
+    }
+
+    # Assign effect sizes to predictors
+    effect_sizes <- assign_effect_sizes(df$TE[1])
+    df$effect_size <- effect_sizes
+
+    # Compute inclusion rate for each effect size group
+    inclusion_by_group <- df %>%
+      mutate(selected = df[[heuristic]]) %>%
+      group_by(effect_size) %>%
+      summarise(
+        inclusion_rate = mean(selected, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        N = df$N[1],
+        corr = df$corr[1],
+        TE = df$TE[1],
+        r = df$r[1],
+        heuristic = heuristic
+      ) %>%
+      select(N, corr, TE, r, heuristic, effect_size, inclusion_rate)
+
+    results[[heuristic]] <- inclusion_by_group
+  }
+
+  return(bind_rows(results))
+}
+
+ppvs_rates_by_effect_size <- all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  group_split() %>%
+  map_dfr(~ compute_rates_by_effect_size(.x, heuristics))
+
+ppvs_rates_by_effect_size
+```
+
+
+# ssvs rates by effect size
+```{r}
+compute_ssvs_rates_by_effect_size <- function(df) {
+  # Determine true predictors
+  true_predictors <- get_true_predictors(df$TE[1])
+  
+  # Assign effect size labels (large, medium, small, null)
+  df <- df %>%
+    mutate(
+      effect_size = case_when(
+        Variable %in% true_predictors ~ rep(c("large", "medium", "small"), each = 5)[match(Variable, true_predictors)],
+        TRUE ~ "null"
+      )
+    )
+
+  # Count total predictors per group (denominator for inclusion rate)
+  effect_size_counts <- df %>%
+    group_by(effect_size) %>%
+    summarise(total = n(), .groups = "drop")
+  
+  # Count how many predictors were selected in each group
+  selected_counts <- df %>%
+    filter(selected_pred_ssvs == 1) %>%
+    group_by(effect_size) %>%
+    summarise(selected = n(), .groups = "drop")
+  
+  # Join and calculate inclusion rates per effect size group
+  rates_by_effect_size <- left_join(effect_size_counts, selected_counts, by = "effect_size") %>%
+    mutate(
+      selected = replace_na(selected, 0),
+      inclusion_rate = selected / total,
+      N = df$N[1],
+      corr = df$corr[1],
+      TE = df$TE[1],
+      r = df$r[1],
+      method = "SSVS"
+    ) %>%
+    select(N, corr, TE, r, effect_size, inclusion_rate, method)
+
+  return(rates_by_effect_size)
+}
+
+all_ssvs_rates_by_effect_size <- all_ssvs_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  group_split() %>%
+  map_dfr(compute_ssvs_rates_by_effect_size)
+all_ssvs_rates_by_effect_size
+```
+
+# combine rates by effect size
+```{r}
+# Add method column to both datasets
+ppvs_rates_by_effect_size <- ppvs_rates_by_effect_size %>%
+  mutate(method = "PPVS")
+
+all_ssvs_rates_by_effect_size <- all_ssvs_rates_by_effect_size %>%
+  mutate(heuristic = "SSVS")  # Ensure heuristic column exists
+
+# Combine both datasets
+combined_rates_by_effect_size <- bind_rows(ppvs_rates_by_effect_size, all_ssvs_rates_by_effect_size)
+
+# View structure to check
+glimpse(combined_rates_by_effect_size)
+head(combined_rates_by_effect_size)
+```
+# combined rates by effect size visualization
+```{r}
+combined_rates_by_effect_size %>%
+  filter(!(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_lower", "lower"))) %>%
+  ggplot(aes(x = factor(TE), y = inclusion_rate, fill = heuristic)) + 
+  geom_boxplot(alpha = 0.7) +
+  facet_grid(corr + N ~ effect_size) +
+  theme_minimal() +
+  labs(title = "Inclusion Rate cross conditions",
+       x = "TE",
+       y = "Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+# ppvs pmse
+```{r}
+# Function to extract metadata from filenames
+extract_metadata <- function(file_path) {
+  data.frame(
+    file_path = file_path,
+    N = as.numeric(str_extract(file_path, "(?<=_N)\\d+")),
+    corr = as.numeric(str_extract(file_path, "(?<=_corr)0\\.\\d+")),
+    TE = str_extract(file_path, "(?<=_TE)[a-z]+"),
+    r = as.numeric(str_extract(file_path, "(?<=_r)\\d+"))
+  )
+}
+
+# Function to compute PMSE for each heuristic and prediction type
+compute_pmse <- function(file_path) {
+  load(file_path)  # Loads `prj_pred_results_list`
+
+  # Extract metadata from the filename
+  metadata <- extract_metadata(file_path)
+
+  # Extract true values
+  y <- prj_pred_results_list$y
+
+  # Get the heuristics present in the file
+  heuristics <- names(prj_pred_results_list)[names(prj_pred_results_list) != "y"]
+
+  # Ensure all heuristics are accounted for, including missing ones
+  expected_heuristics <- c("default", "lower", "thres_upper", "thres_lower")  # Adjust based on your setup
+  missing_heuristics <- setdiff(expected_heuristics, heuristics)
+
+  # Initialize result list
+  pmse_results <- list()
+
+  # Compute PMSE for each heuristic
+  for (heuristic in expected_heuristics) {
+    if (heuristic %in% heuristics) {
+      pred_results <- prj_pred_results_list[[heuristic]]
+    } else {
+      pred_results <- NULL  # Simulate missing heuristic
+    }
+
+    # Handle missing heuristics by returning NA
+    if (is.null(pred_results)) {
+      pmse_results[[heuristic]] <- tibble(
+        heuristic = heuristic,
+        prediction_type = c("pred", "pred_testScaledOnTrain"),
+        pmse = NA_real_
+      )
+      next  # Skip to next heuristic
+    }
+
+    # Extract predictions for both types
+    pred_list <- list(
+      pred = pred_results$prj_pred,  # Matrix (num_draws x num_test_points)
+      pred_testScaledOnTrain = pred_results$prj_pred_testScaledOnTrain  # Matrix (num_draws x num_test_points)
+    )
+
+    # Compute PMSE for both prediction types
+    pmse_df <- map_dfr(names(pred_list), function(pred_type) {
+      pred_matrix <- pred_list[[pred_type]]
+
+      # Compute PMSE (mean squared error using mean prediction per test point)
+      pmse <- mean((y - colMeans(pred_matrix))^2, na.rm = TRUE)
+
+      return(tibble(
+        heuristic = heuristic,
+        prediction_type = pred_type,
+        pmse = pmse
+      ))
+    })
+
+    pmse_results[[heuristic]] <- pmse_df
+  }
+
+  # Merge metadata with PMSE results
+  return(bind_cols(metadata, bind_rows(pmse_results)))
+}
+
+# Get all prj_pred files
+prj_pred_files <- list.files("output_study2/ppvs/prj_pred/", pattern = "^prj_pred_", full.names = TRUE)
+
+# Apply function to all files
+pmse_results <- bind_rows(lapply(prj_pred_files, compute_pmse))
+pmse_results <- pmse_results[, -1]
+
+# View results
+print(pmse_results)
+
+```
+
+
+# ssvs pmse
+```{r}
+# List all SSVS prediction files
+ssvs_pred_files <- list.files("output_study2/ssvs/ssvs_pred_results/", pattern = "^ssvs_pred_results_N", full.names = TRUE)
+
+# Extract metadata from filenames
+ssvs_metadata <- tibble(
+  file = ssvs_pred_files,
+  N = as.numeric(str_extract(ssvs_pred_files, "(?<=ssvs_pred_results_N)\\d+")),
+  corr = as.numeric(str_extract(ssvs_pred_files, "(?<=_corr)0\\.\\d+")),
+  TE = str_extract(ssvs_pred_files, "(?<=_TE)[a-z]+"),
+  r = as.numeric(str_extract(ssvs_pred_files, "(?<=_r)\\d+"))
+)
+
+# Function to compute PMSE
+compute_pmse_ssvs <- function(file_path) {
+  load(file_path)  # This loads `ssvs_pred_results`
+  
+  # Extract metadata
+  file_info <- ssvs_metadata %>% filter(file == file_path)
+  
+  # Extract predictions and true values
+  y <- ssvs_pred_results$y
+  pred_test <- ssvs_pred_results$pred  # Posterior predictive draws for test data
+  pred_test_scaled <- ssvs_pred_results$pred_testScaledOnTrain  # Scaled test data
+  
+  # Compute PMSE
+  pmse_test <- mean((y - colMeans(pred_test))^2)
+  pmse_test_scaled <- mean((y - colMeans(pred_test_scaled))^2)
+
+  return(tibble(
+    N = file_info$N,
+    corr = file_info$corr,
+    TE = file_info$TE,
+    r = file_info$r,
+    pmse_test = pmse_test,
+    pmse_test_scaled = pmse_test_scaled
+  ))
+}
+
+# Compute PMSE for all files
+ssvs_pmse_results <- bind_rows(lapply(ssvs_pred_files, compute_pmse_ssvs))
+
+# View results
+print(ssvs_pmse_results)
+```
+
+```{r}
+ssvs_pmse_results_long <- ssvs_pmse_results %>%
+  pivot_longer(cols = c(pmse_test, pmse_test_scaled), 
+               names_to = "prediction_type", 
+               values_to = "pmse") %>%
+  mutate(prediction_type = recode(prediction_type, 
+                                  pmse_test = "pred", 
+                                  pmse_test_scaled = "pred_testScaledOnTrain"))
+
+# View the result
+print(ssvs_pmse_results_long)
+
+```
+
+# combine pmse
+```{r}
+# Add method column to both datasets
+all_pmse_long <- pmse_results %>%
+  mutate(method = "PPVS")
+
+all_ssvs_pmse <- ssvs_pmse_results_long %>%
+  mutate(method = "SSVS",
+         heuristic = "SSVS")  # Ensure heuristic column exists
+
+# Combine both datasets
+combined_pmse <- bind_rows(all_pmse_long, all_ssvs_pmse)
+combined_pmse$method <- as.factor(combined_pmse$method)
+
+# View structure to check
+glimpse(combined_pmse)
+print(combined_pmse)
+```
+
+# pmse visualization
+```{r}
+combined_pmse %>%
+  filter(prediction_type == "pred") %>%
+  ggplot(aes(x = pmse, fill = heuristic, color = heuristic)) +
+  geom_density(alpha = 0.3) +  
+  facet_grid(TE ~ corr+ N) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "PMSE", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred", !(heuristic %in% c("lower"))) %>%
+  ggplot(aes(x = pmse, fill = heuristic, color = heuristic)) +
+  geom_density(alpha = 0.3) +  
+  facet_grid(TE ~ corr+ N) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "PMSE", 
+       y = "Density") +
+  theme_minimal()
+```
+
+## pmse where lower worked
+```{r}
+# extract the replications where the lower heuristic worked also for the other heuristics to see if it only works with easy conditions or does give a difference
+# different combinations of heuristics
+# density plots
+combined_pmse %>%
+  filter(prediction_type == "pred") %>%
+  semi_join(
+    combined_pmse %>%
+      filter(heuristic == "lower",
+             prediction_type == "pred",
+             !is.na(pmse)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+  ggplot(aes(x = pmse, fill = heuristic, color = heuristic)) +
+  geom_density(alpha = 0.3) +  
+  facet_grid(TE ~ corr+ N) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "PMSE", 
+       y = "Density") +
+  theme_minimal()
+
+
+combined_pmse %>%
+  filter(prediction_type == "pred") %>%
+  semi_join(
+    combined_pmse %>%
+      filter(heuristic == "lower",
+             prediction_type == "pred",
+             !is.na(pmse)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+  filter(heuristic %in% c("default", "lower", "thres_lower")) %>%
+  ggplot(aes(x = pmse, fill = heuristic, color = heuristic)) +
+  geom_density(alpha = 0.3) +  
+  facet_grid(TE ~ corr+ N) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "PMSE", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred") %>%
+  semi_join(
+    combined_pmse %>%
+      filter(heuristic == "lower",
+             prediction_type == "pred",
+             !is.na(pmse)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+  filter(!(heuristic %in% c("default", "thres_lower", "thres_upper"))) %>%
+  ggplot(aes(x = pmse, fill = heuristic, color = heuristic)) +
+  geom_density(alpha = 0.3) +  
+  facet_grid(TE ~ corr+ N) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "PMSE", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred") %>%
+  semi_join(
+    combined_pmse %>%
+      filter(heuristic == "lower",
+             prediction_type == "pred",
+             !is.na(pmse)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+  filter(!(heuristic %in% c("lower", "thres_upper"))) %>%
+  ggplot(aes(x = pmse, fill = heuristic, color = heuristic)) +
+  geom_density(alpha = 0.3) +  
+  facet_grid(TE ~ corr+ N) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "PMSE", 
+       y = "Density") +
+  theme_minimal()
+```
+
+
+
+```{r}
+# extract the replications where the lower heuristic worked also for the other heuristics to see if it only works with easy conditions or does give a difference
+# different combinations of heuristics
+# boxplots
+combined_pmse %>%
+  filter(prediction_type == "pred") %>%
+  semi_join(
+    combined_pmse %>%
+      filter(heuristic == "lower",
+             prediction_type == "pred",
+             !is.na(pmse)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+  filter(!(heuristic %in% c("thres_lower"))) %>%
+  ggplot(aes(x = TE, y = pmse, fill = heuristic)) +
+  geom_boxplot() +  
+  facet_grid(corr ~ N) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "TE", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred") %>%
+  semi_join(
+    combined_pmse %>%
+      filter(heuristic == "lower",
+             prediction_type == "pred",
+             !is.na(pmse)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+  filter(heuristic %in% c("default", "lower", "thres_lower")) %>%
+  ggplot(aes(x = TE, y = pmse, fill = heuristic)) +
+  geom_boxplot() +  
+  facet_grid(corr ~ N) + 
+  labs(title = "PMSE Density Across Conditions", 
+       x = "TE", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred") %>%
+  semi_join(
+    combined_pmse %>%
+      filter(heuristic == "lower",
+             prediction_type == "pred",
+             !is.na(pmse)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+  filter(!(heuristic %in% c("default", "thres_lower", "thres_upper"))) %>%
+  ggplot(aes(x = TE, y = pmse, fill = heuristic)) +
+  geom_boxplot() +  
+  facet_grid(corr ~ N) + 
+  labs(title = "PMSE Density Across Conditions", 
+       x = "TE", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred") %>%
+  semi_join(
+    combined_pmse %>%
+      filter(heuristic == "lower",
+             prediction_type == "pred",
+             !is.na(pmse)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+  filter(!(heuristic %in% c("lower", "thres_upper"))) %>%
+  ggplot(aes(x = TE, y = pmse, fill = heuristic)) +
+  geom_boxplot() +  
+  facet_grid(corr ~ N) + 
+  labs(title = "PMSE Density Across Conditions", 
+       x = "TE", 
+       y = "Density") +
+  theme_minimal()
+```
+
+hmmm it looks like the SE heuristic lower bound could be performing better...
+```{r}
+# without lower heuristic
+# density plots
+# different faceting
+combined_pmse %>%
+  filter(prediction_type == "pred", !(heuristic %in% c("lower", "thres_upper"))) %>%
+  ggplot(aes(x = pmse, fill = heuristic, color = heuristic)) +
+  geom_density(alpha = 0.3) +  
+  geom_vline(data = ~ .x %>%
+               group_by(N, corr, TE, heuristic) %>%
+               summarise(mean_pmse = mean(pmse, na.rm = TRUE), .groups = "drop"),
+             aes(xintercept = mean_pmse, color = heuristic),
+             linetype = "dashed", size = 0.8, show.legend = FALSE) +
+  facet_grid(TE ~ corr + N) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "PMSE", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred", !(heuristic %in% c("lower", "thres_upper"))) %>%
+  ggplot(aes(x = pmse, fill = heuristic, color = heuristic)) +
+  geom_density(alpha = 0.3) +  
+  geom_vline(data = ~ .x %>%
+               group_by(N, corr, TE, heuristic) %>%
+               summarise(mean_pmse = mean(pmse, na.rm = TRUE), .groups = "drop"),
+             aes(xintercept = mean_pmse, color = heuristic),
+             linetype = "dashed", size = 0.8, show.legend = FALSE) +
+  facet_grid(corr ~ TE + N) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "PMSE", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred", !(heuristic %in% c("lower", "thres_upper"))) %>%
+  ggplot(aes(x = pmse, fill = heuristic, color = heuristic)) +
+  geom_density(alpha = 0.3) +  
+  geom_vline(data = ~ .x %>%
+               group_by(N, corr, TE, heuristic) %>%
+               summarise(mean_pmse = mean(pmse, na.rm = TRUE), .groups = "drop"),
+             aes(xintercept = mean_pmse, color = heuristic),
+             linetype = "dashed", size = 0.8, show.legend = FALSE) +
+  facet_grid(N ~ TE + corr) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "PMSE", 
+       y = "Density") +
+  theme_minimal()
+```
+
+
+```{r}
+# test X scaled using training stats or not
+combined_pmse %>%
+  filter(heuristic == "default") %>%
+  ggplot(aes(x = factor(N), y = pmse, fill = prediction_type)) +
+  geom_boxplot() +
+  facet_grid(TE ~ corr) +  
+  labs(title = "PMSE Density Across Conditions for default heuristic", 
+       x = "N", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(heuristic == "lower") %>%
+  ggplot(aes(x = factor(N), y = pmse, fill = prediction_type)) +
+  geom_boxplot() +
+  facet_grid(TE ~ corr) +  
+  labs(title = "PMSE Density Across Conditions for lower", 
+       x = "N", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(heuristic == "thres_lower") %>%
+  ggplot(aes(x = factor(N), y = pmse, fill = prediction_type)) +
+  geom_boxplot() +
+  facet_grid(TE ~ corr) +  
+  labs(title = "PMSE Density Across Conditions for thres_lower", 
+       x = "N", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(!(heuristic %in% c("default", "lower", "thres_lower", "thres_upper"))) %>%
+  ggplot(aes(x = factor(N), y = pmse, fill = prediction_type)) +
+  geom_boxplot() +
+  facet_grid(TE ~ corr) +  
+  labs(title = "PMSE Density Across Conditions for SSVS", 
+       x = "N", 
+       y = "Density") +
+  theme_minimal()
+
+```
+
+It looks like for high corr and especially when the true effects are clustered, if the test data was scaled using the training stats could make a difference.
+
+```{r}
+# without lower heuristic
+# density plots
+# different faceting
+combined_pmse %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper"))) %>%
+  ggplot(aes(x = factor(N), y = pmse, fill = heuristic)) +
+  geom_boxplot() +
+  facet_grid(TE ~ corr) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "N", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper"))) %>%
+  ggplot(aes(x = factor(corr), y = pmse, fill = heuristic)) +
+  geom_boxplot() +
+  facet_grid(TE ~ N) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "corr", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper"))) %>%
+  ggplot(aes(x = factor(corr), y = pmse, fill = heuristic)) +
+  geom_boxplot() +
+  facet_grid(N ~ TE) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "corr", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper"))) %>%
+  ggplot(aes(x = factor(TE), y = pmse, fill = heuristic)) +
+  geom_boxplot() +
+  facet_grid(corr ~ N) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "TE", 
+       y = "Density") +
+  theme_minimal()
+```
+
+When corr is low, sample size 50 gives larger pmse compared to sample size 75. SSVS has lower mean and the interval is also smaller.
+When corr is high and TE clustered, sample size doesn't matter as much, and SSVS is doing worse with higher mean and greater intervals. When corr is high and TE mixed, sample size 50 gives larger pmse. When corr is high and TE mixed, the intervals are larger than where corr is high but TE clustered.
+
+When TE mixed, the intervals are generally larger.
+
+When N is 50 and corr is low, pmses are higher and SSVS looks better. When N is small and corr is high, SSVS is doing similarly, and worse when TE clustered.
+The pattern looks similar when N is 75.
+
+```{r}
+ggplot(data.frame(pred = prj_pred_results_list$default$prj_pred[, 1]), aes(x = pred)) +
+  geom_density(fill = "blue", alpha = 0.3, adjust = 1.2) +
+  geom_vline(xintercept = mean(prj_pred_results_list$default$prj_pred[, 1]), 
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Density for a Test Observation", 
+       x = "Prediction", 
+       y = "Density") +
+  theme_minimal()
+
+```
+
+
+# CI coverage
+
+## ppvs
+```{r}
+# Define the function to compute mean and 95% HDI credible interval
+summary_stats_mean_CI <- function(x) {
+  mean_x <- mean(x)
+  ci_x <- bayestestR::ci(x, method = "HDI", ci = 0.95)
+  return(c(mean = mean_x, lower = ci_x$CI_low, upper = ci_x$CI_high))
+}
+
+# Define a function to process a single file (heuristic in one replication and condition)
+compute_coverage <- function(file_path) {
+  load(file_path)  # This loads `prj_pred_results_list`
+  
+  heuristics <- names(prj_pred_results_list)[names(prj_pred_results_list) != "y"]  # Exclude 'y'
+  y_true <- prj_pred_results_list$y  # Extract true y values
+  
+  # Extract metadata from filename
+  condition_info <- tibble(
+    N = as.numeric(str_extract(file_path, "(?<=N)\\d+")),
+    corr = as.numeric(str_extract(file_path, "(?<=_corr)0\\.\\d+")),
+    TE = str_extract(file_path, "(?<=_TE)[a-z]+"),
+    r = as.numeric(str_extract(file_path, "(?<=_r)\\d+"))
+  )
+  
+  # Initialize list to store results for different heuristics
+  heuristic_results <- list()
+  
+  for (heuristic in heuristics) {
+    for (prediction_type in c("prj_pred", "prj_pred_testScaledOnTrain")) {
+      
+      pred_matrix <- prj_pred_results_list[[heuristic]][[prediction_type]]
+      
+      # Skip if heuristic failed (NULL)
+      if (is.null(pred_matrix)) {
+        heuristic_results[[paste0(heuristic, "_", prediction_type)]] <- tibble(
+          N = condition_info$N,
+          corr = condition_info$corr,
+          TE = condition_info$TE,
+          r = condition_info$r,
+          heuristic = heuristic,
+          prediction_type = prediction_type,
+          person_id = 1:1000,
+          coverage = NA  # NA for failed heuristics
+        )
+        next
+      }
+      
+      # Compute mean and credible interval for each person (column-wise)
+      result <- apply(pred_matrix, 2, summary_stats_mean_CI)
+      
+      # Convert to data frame (1000 rows, 3 columns: mean, lower, upper)
+      result_df <- as.data.frame(t(result))
+      
+      # Compute coverage: mean within the credible interval
+      coverage <- (y_true > result_df$lower) & (y_true < result_df$upper)
+      
+      # Store results
+      heuristic_results[[paste0(heuristic, "_", prediction_type)]] <- tibble(
+        N = condition_info$N,
+        corr = condition_info$corr,
+        TE = condition_info$TE,
+        r = condition_info$r,
+        heuristic = heuristic,
+        prediction_type = prediction_type,
+        person_id = 1:1000,
+        coverage = coverage
+      )
+    }
+  }
+  
+  # Bind results for all heuristics and prediction types
+  return(bind_rows(heuristic_results))
+}
+
+# Apply function to all files and combine results
+ppvs_coverage_results <- bind_rows(lapply(prj_pred_files, compute_coverage))
+
+# Summarize for each person across 100 replications, computing the percentage
+ppvs_summary_coverage <- ppvs_coverage_results %>%
+  group_by(N, corr, TE, heuristic, prediction_type, r) %>%
+  summarise(replication_coverage = sum(coverage, na.rm = TRUE) / 1000, .groups = "drop")  # Convert to percentage
+
+# View results
+print(ppvs_summary_coverage)
+```
+
+## ssvs
+```{r}
+# Function to compute coverage for SSVS
+compute_ssvs_coverage <- function(file) {
+  load(file)  # Load ssvs_pred_results
+  
+  # Extract metadata from filename
+  condition_info <- tibble(
+    N = as.numeric(str_extract(file, "(?<=N)\\d+")),
+    corr = as.numeric(str_extract(file, "(?<=_corr)0\\.\\d+")),
+    TE = str_extract(file, "(?<=_TE)[a-z]+"),
+    r = as.numeric(str_extract(file, "(?<=_r)\\d+"))
+  )
+  
+  # Extract true y values
+  y_true <- ssvs_pred_results$y
+  
+  # Initialize list to store results
+  prediction_results <- list()
+  
+  for (prediction_type in c("pred", "pred_testScaledOnTrain")) {
+    
+    # Extract the prediction matrix
+    pred_matrix <- ssvs_pred_results[[prediction_type]]
+    
+    # Compute mean and credible interval for each person (column-wise)
+    result <- apply(pred_matrix, 2, summary_stats_mean_CI)
+    
+    # Convert to data frame (1000 rows, 3 columns: mean, lower, upper)
+    result_df <- as.data.frame(t(result))
+    
+    # Compute coverage: mean within the credible interval
+    coverage <- (y_true > result_df$lower) & (y_true < result_df$upper)
+    
+    # Store results
+    prediction_results[[prediction_type]] <- tibble(
+      N = condition_info$N,
+      corr = condition_info$corr,
+      TE = condition_info$TE,
+      r = condition_info$r,
+      prediction_type = prediction_type,  # Already formatted correctly
+      person_id = 1:1000,
+      coverage = coverage
+    )
+  }
+  
+  # Combine both prediction types
+  bind_rows(prediction_results)
+}
+
+# Apply function to all SSVS prediction files and combine results
+system.time(ssvs_coverage_results <- bind_rows(lapply(ssvs_pred_files, compute_ssvs_coverage)))
+
+# Convert coverage to percentage
+ssvs_coverage_summary <- ssvs_coverage_results %>%
+  group_by(N, corr, TE, prediction_type, r) %>%
+  summarise(replication_coverage = sum(coverage) / n(), .groups = "drop")
+
+# Display results
+print(ssvs_coverage_summary)
+```
+
+```{r}
+# Add method column to both datasets
+ppvs_summary_coverage <- ppvs_summary_coverage %>%
+    mutate(method = "PPVS",
+           prediction_type = ifelse(prediction_type == "prj_pred", "pred", "pred_testScaledOnTrain"))
+
+ssvs_coverage_summary <- ssvs_coverage_summary %>%
+  mutate(method = "SSVS",
+         heuristic = "SSVS")  # Ensure heuristic column exists
+
+# Combine both datasets
+combined_coverage_summary <- bind_rows(ppvs_summary_coverage, ssvs_coverage_summary)
+combined_coverage_summary$method <- as.factor(combined_coverage_summary$method)
+
+# View structure to check
+glimpse(combined_coverage_summary)
+print(combined_coverage_summary)
+```
+
+```{r}
+# combined_coverage_summary %>%
+#   filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper"))) %>%
+#   ggplot(aes(x = replication_coverage, fill = heuristic, col = heuristic)) + 
+#   geom_density(alpha = 0.3) +
+#   facet_grid(N ~ TE + corr) +  
+#   labs(title = "Density of coverage percentage for 1000 observations Across Conditions", 
+#        x = "Replication coverage percentage", 
+#        y = "Density") +
+#   theme_minimal()
+
+# the interpretation is that, in a given condition, most people have their true value successfully covered in the credible interval by SSVS method?...
+```
+
+```{r}
+combined_coverage_summary %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper"))) %>%
+  ggplot(aes(x = replication_coverage, fill = heuristic, col = heuristic)) + 
+  geom_density(alpha = 0.3) +
+  facet_grid(N ~ TE + corr) +  
+  labs(title = "Density of coverage percentage for 100 replications Across Conditions", 
+       x = "Replication coverage percentage", 
+       y = "Density") +
+  theme_minimal()
+```
+
