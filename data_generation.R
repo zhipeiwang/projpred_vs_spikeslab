@@ -3,6 +3,73 @@
 library(Matrix)
 library(MASS)
 
+#################################### Study 1 test data generation ####################################
+##### data generation function #####--------------------------------------------------------------------------------
+data_gen_study1 <- function(N, bc, pattern_TE) {
+  p <- 50
+  t <- 10
+  mu <- rep(0, p)
+  
+  # Create block-diagonal correlation matrix
+  Sigma0 <- bdiag(replicate(10, {
+    block <- matrix(bc, nrow = 5, ncol = 5)
+    diag(block) <- 1
+    block
+  }, simplify = FALSE))
+  Sigma0 <- as.matrix(Sigma0)
+  
+  # Set beta coefficients
+  if (pattern_TE == "mixed") {
+    beta <- c(1.5, rep(0, 4), 0.9, rep(0, 4), 0.9, rep(0, 4), 0.3, rep(0, 4), 0.3, rep(0, 4), 
+              1.5, rep(0, 4), 0.9, rep(0, 4), 0.9, rep(0, 4), 0.3, rep(0, 4), 0.3, rep(0, 4))
+  } else if (pattern_TE == "clustered") {
+    beta <- c(rep(c(1.5, 0.9, 0.9, 0.3, 0.3), 2), rep(0, p - t))
+  } else {
+    stop("Invalid pattern_TE value. Use 'mixed' or 'clustered'.")
+  }
+  
+  # Generate one dataset
+  X <- mvrnorm(n = N, mu = mu, Sigma = Sigma0)
+  colnames(X) <- paste0("X", 1:p)
+  y <- X %*% beta + rnorm(N)
+  df <- data.frame(y, X)
+  return(df)
+}
+
+##### data generation #####--------------------------------------------------------------------------------
+set.seed(123)
+bc_vals <- c(0, 0.4, 0.8)
+patterns_all <- c("clustered", "mixed")
+n_train <- 100
+n_test <- 1000
+r <- 100  # number of replications
+
+for (bc in bc_vals) {
+  patterns <- if (bc == 0) "clustered" else patterns_all
+  
+  for (pattern in patterns) {
+    df_train <- vector("list", r)
+    df_test <- vector("list", r)
+    
+    for (i in 1:r) {
+      df_train[[i]] <- data_gen_study1(N = n_train, bc = bc, pattern_TE = pattern)
+      df_test[[i]]  <- data_gen_study1(N = n_test, bc = bc, pattern_TE = pattern)
+    }
+    
+    # Save in RData format
+    
+    train_filename <- paste0("p50/train_n", n_train, "_p50_corr", bc, "_TE", pattern, ".RData")
+    test_filename  <- paste0("p50/test_fortrain_n", n_train, "_p50_corr", bc, "_TE", pattern, ".RData")
+    
+    save(df_train, file = train_filename)
+    save(df_test, file = test_filename)
+    
+    cat("Saved:", train_filename, "and", test_filename, "\n")
+  }
+}
+
+
+#################################### Study 2 data generation ####################################
 ##### data generation function #####--------------------------------------------------------------------------------
 data_gen <- function(rho, n, pattern_TE) {
   

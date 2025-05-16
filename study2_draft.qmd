@@ -29,7 +29,7 @@ library(tidyverse)
 #   geom_jitter(width = 0.2, alpha = 0.5) +
 #   theme_minimal() +
 #   facet_grid(corr ~ TE)
-#
+# 
 # all_df_out %>%
 #   group_by(N, corr, TE, r) %>%
 #   summarise(n_div = unique(div), .groups = "drop") %>%
@@ -42,38 +42,67 @@ library(tidyverse)
 #     max_div = max(n_div),
 #     .groups = "drop"
 #   )
-#
-#
+
+
+all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  summarise(perc_div = unique(div) * 100 / 4000, .groups = "drop") %>%
+  group_by(N, corr, TE) %>%
+  summarise(
+    mean_perc = mean(perc_div),
+    median_perc = median(perc_div),
+    sd_perc = sd(perc_div),
+    min_perc = min(perc_div),
+    max_perc = max(perc_div),
+    .groups = "drop"
+  )
+
 # all_df_out %>%
 #   group_by(N, corr, TE, r) %>%
 #   summarise(perc_div = unique(div) * 100 / 4000, .groups = "drop") %>%
-#   group_by(N, corr, TE) %>%
-#   summarise(
-#     mean_perc = mean(perc_div),
-#     median_perc = median(perc_div),
-#     sd_perc = sd(perc_div),
-#     min_perc = min(perc_div),
-#     max_perc = max(perc_div),
-#     .groups = "drop"
-#   )
-
-# nonconver_reps <- all_df_out %>%
+#   filter(N == 50, corr == 0.2, TE == "mixed") %>%
+#   arrange(desc(perc_div))
+# 
+# all_df_out %>%
 #   group_by(N, corr, TE, r) %>%
-#   summarise(n_div = unique(div),
-#             perc_div = unique(div) * 100 / 4000,
-#             n_Rhat = sum(Rhat > 1.1),
-#             .groups = "drop") %>%
-#   filter(n_Rhat != 0) %>% select(r)
+#   summarise(perc_div = unique(div) * 100 / 4000, .groups = "drop") %>%
+#   filter(N == 50, corr == 0.2, TE == "clustered") %>%
+#   arrange(desc(perc_div))
 
-# nonconv_df <- all_df_out %>%
-#   group_by(N, corr, TE, r) %>%
-#   summarise(n_div = unique(div),
-#             perc_div = unique(div) * 100 / 4000,
-#             n_Rhat = sum(Rhat > 1.1),
-#             .groups = "drop") %>%
-#   filter(n_Rhat != 0)
+all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  summarise(
+    n_div = unique(div),
+    perc_div = unique(div) * 100 / 4000, 
+    n_Rhat = sum(Rhat >= 1.01),
+    n_ESS = sum(Bulk_ESS <= 400),
+    .groups = "drop"
+  ) %>%
+  filter(n_Rhat != 0 | n_ESS != 0 | perc_div > 10) %>%
+  group_by(N, corr, TE) %>%
+  summarise(n_reps = n(), .groups = "drop")
 
-nonconv_df
+problematic_reps <- all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  summarise(
+    n_div = unique(div),
+    perc_div = unique(div) * 100 / 4000, 
+    n_Rhat = sum(Rhat >= 1.01),
+    n_ESS = sum(Bulk_ESS <= 400),
+    .groups = "drop"
+  ) %>%
+  filter(n_Rhat != 0 | n_ESS != 0 | perc_div > 10) %>%
+  select(N, corr, TE, r)
+
+nonconver_reps <- all_df_out %>%
+  group_by(N, corr, TE, r) %>%
+  summarise(n_div = unique(div),
+            perc_div = unique(div) * 100 / 4000,
+            n_Rhat = sum(Rhat >= 1.1),
+            .groups = "drop") %>%
+  filter(n_Rhat != 0 | perc_div > 10) %>%
+  select(N, corr, TE, r)
+
 ```
 
 Convergence is assessed from two perspectives: first the convergence of the reference model using the regularized horseshoe prior in projpred, second the success or failure of the suggest_size() function in the PPVS package.
@@ -81,7 +110,7 @@ Convergence is assessed from two perspectives: first the convergence of the refe
 ## Reference model convergence
 Convergence for the reference model is evaluated based on Rhat values (more description and reference since this is what the checking mostly based on) and the number of divergent transitions. Rhat is a commonly used diagnostic measure for MCMC convergence; values above 1.1 indicate potential issues. Given that the regularized horseshoe prior is known to prone to induce divergent transitions, we consider both diagnostics in conjunction.
 
-The number of divergent transitions is summarized as a percentage across replications and conditions. The Rhat values are examined per replication: the number of parameters with Rhat > 1.1 is counted. Replications with any such parameters are flagged, and four replications (from different conditions) were identified as problematic based on this criterion. These replications also exhibited higher percentages of divergent transitions, supporting the decision to exclude them from subsequent analyses.
+The number of divergent transitions is summarized as a percentage across replications and conditions. The Rhat values are examined per replication: the number of parameters with Rhat > 1.1 is counted. Replications with any such parameters are flagged, and four replications (from different conditions) were identified as problematic based on this criterion. These replications also exhibited higher percentages of divergent transitions, supporting the decision to exclude them from subsequent analyses. In addition, the criterion that replications with percentage of divergent transitions larger than 10 should be excluded was also used, and one such replication was found and excluded while the other 4 replications with larger than 10 percent of divergent transitions also didn't meet the Rhat criterion and were already excluded.
 
 ## Failure of suggest_size() Function
 ```{r}
@@ -140,113 +169,27 @@ https://michael-franke.github.io/Bayesian-Regression/practice-sheets/05b-diverge
 https://livefull.github.io/
 
 
-# rates
+# variable selection accuracy
+## rates
+
+### Full Analysis: All Replications Included
 ```{r}
-# filtering the replications where the lower threshold worked
 combined_rates %>%
-  # First remove non-converged reps
-  filter(!(r %in% nonconver_reps$r)) %>%
-  
-  # Then filter for reps where 'lower' heuristic worked
-  semi_join(
-    combined_rates %>%
-      filter(heuristic == "selected_pred_ppvs_lower", !is.na(true_inclusion_rate)) %>%
-      select(N, corr, TE, r),
-    by = c("N", "corr", "TE", "r")
-  ) %>%
-
-  filter(heuristic != "selected_pred_ppvs_thres_lower") %>%
+  filter(!(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_lower", "SSVS"))) %>%
   ggplot(aes(x = factor(N), y = true_inclusion_rate, fill = heuristic, col = heuristic)) +
-  geom_boxplot(alpha = 0.7) +  
+  geom_boxplot(alpha = 0.7) +
   stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
-  facet_grid(TE ~ corr) +  
-  labs(title = "True inclusion rate Across Conditions", 
-       x = "N", 
-       y = "true inclusion rate") +
-  theme_minimal()
-
-summary_na[summary_na$heuristic == "selected_pred_ppvs_lower", ]
-
-# filtering the replications where the lower threshold worked
-combined_counts %>%
-  # First remove non-converged reps
-  filter(!(r %in% nonconver_reps$r)) %>%
-  
-  # Then filter for reps where 'lower' heuristic worked
-  semi_join(
-    combined_counts %>%
-      filter(heuristic == "lower", !is.na(n_selected)) %>%
-      select(N, corr, TE, r),
-    by = c("N", "corr", "TE", "r")
-  ) %>%
-
-  filter(heuristic != "thres_lower") %>%
-  ggplot(aes(x = factor(N), y = n_selected, fill = heuristic)) +
-  geom_boxplot(alpha = 0.7) +  
-  facet_grid(TE ~ corr) +  
-  labs(title = "Counts of selected predictors Across Conditions", 
-       x = "N", 
-       y = "Count") +
-  theme_minimal()
-
-combined_rates %>%
-  # First remove non-converged reps
-  filter(!(r %in% nonconver_reps$r)) %>%
-  
-  # Then filter for reps where 'lower' heuristic worked
-  semi_join(
-    combined_rates %>%
-      filter(heuristic == "selected_pred_ppvs_lower", !is.na(false_inclusion_rate)) %>%
-      select(N, corr, TE, r),
-    by = c("N", "corr", "TE", "r")
-  ) %>%
-
-  filter(heuristic != "selected_pred_ppvs_thres_lower") %>%
-  ggplot(aes(x = factor(N), y = false_inclusion_rate, fill = heuristic)) +
-  geom_boxplot(alpha = 0.7) +  
-  stat_summary(fun = mean, geom = "point", shape = 20, size = 3, color = "black", position = position_dodge(width = 0.75)) +
-  facet_grid(TE ~ corr) +  
-  labs(title = "False inclusion rate Across Conditions", 
-       x = "N", 
-       y = "false inclusion rate") +
-  theme_minimal()
+  facet_grid(TE ~ corr) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions",
+       x = "N",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-## Subset Analysis: Replications Where the Lower Heuristic Worked
-To first investigate the behavior of the lower SE heuristic, we focus on the subset of replications in which it did not fail. It is important to note that within each condition (i.e., each combination of N, correlation, and TE), the number of such replications is limited (ranging from 10 to 43), making it difficult to draw robust conclusions.
+The analyses of variable selection accuracy and predictive performance, we focus on a reduced set of heuristics due to redundancy. The thres_lower and thres_upper heuristics usually result in the same submodel sizes; hence, only thres_upper is retained in this analysis. The default and thres_upper also generally select similar submodel sizes distributions can look a bit different and result in slightly different means, medians and spreads of rates distributions pmse distributions and whatever, but the differences are neligible. The comparison between heuristics can be tricky, because for the threshold heuristic, it only overrides the SE heuristic when the SE heuristic fails, and when both work, the smallest submodel size is returned. So even a threshold is specified, it doesn’t mean this heuristic is the one that is used to determine the size. (And all of this is based on my understanding of how suggest_size works is correct.). So for clearity of comparison We therefore focus on comparing three methods: PPVS-default (upper SE bound) and SSVS. It is also structured that we first look at the broader analysis with all the replications available, and then the subset analysis filtering for replications where the lower heuristic worked.
 
-Still, some patterns emerge. On average, the lower heuristic consistently yields higher true inclusion rates than other PPVS heuristics across all conditions. It also generally outperforms SSVS in terms of average inclusion rates, except in the condition with N = 50, correlation = 0.2, and TE = mixed.
-
-This higher inclusion rate appears to stem from the larger number of predictors selected by the lower heuristic—an expected consequence of its conservative nature, as noted earlier. Although higher inclusion rates can be beneficial, they may come at the cost of higher false inclusion rates.
-
-Given these findings, we continue to include the lower heuristic in subsequent performance evaluations, despite its high failure rate.
-
-## Full Analysis: All Replications Included
 ```{r}
-combined_rates %>%
-  filter(!(r %in% nonconver_reps$r), !(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_lower"))) %>%
-  ggplot(aes(x = factor(N), y = true_inclusion_rate, fill = heuristic, col = heuristic)) +
-  geom_boxplot(alpha = 0.7) +
-  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
-  facet_grid(TE ~ corr) +
-  theme_minimal() +
-  labs(title = "True Inclusion Rate cross conditions",
-       x = "N",
-       y = "True Inclusion Rate") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-combined_rates %>%
-  filter(!(r %in% nonconver_reps$r), !(heuristic %in% c("selected_pred_ppvs_thres_lower"))) %>%
-  ggplot(aes(x = factor(N), y = true_inclusion_rate, fill = heuristic, col = heuristic)) +
-  geom_boxplot(alpha = 0.7) +
-  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
-  facet_grid(TE ~ corr) +
-  theme_minimal() +
-  labs(title = "True Inclusion Rate cross conditions",
-       x = "N",
-       y = "True Inclusion Rate") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
 # thres_lower vs thres_upper heuristics
 
 # for how many replications did thres_upper and thres_lower just gave the same selection of predictors (where they aren't the same, most of the time they are just NAs where at least one of them failed)
@@ -264,39 +207,26 @@ combined_rates %>%
 #     .groups = "drop"
 #   )
 
-combined_rates %>%
-  filter(!(r %in% nonconver_reps$r), !(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_lower"))) %>%
-  ggplot(aes(x = factor(N), y = false_inclusion_rate, fill = heuristic, col = heuristic)) +
-  geom_boxplot(alpha = 0.7) +
-  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
-  facet_grid(TE ~ corr) +
-  theme_minimal() +
-  labs(title = "False Inclusion Rate cross conditions",
-       x = "N",
-       y = "False Inclusion Rate") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 combined_rates %>%
-  filter(!(r %in% nonconver_reps$r), !(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_lower"))) %>%
+  filter(!(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_lower"))) %>%
   group_by(N, corr, TE, heuristic) %>%
   summarise(mean_true_inclusion = mean(true_inclusion_rate, na.rm = TRUE),
             mean_false_inclusion = mean(false_inclusion_rate, na.rm = TRUE), .groups = "drop")
 
-ggplot(combined_counts %>% 
-         filter(!(r %in% nonconver_reps$r), 
-                !(heuristic %in% c("lower", "thres_lower"))),
-       aes(x = factor(N), y = n_selected, fill = heuristic)) +
+combined_counts %>% 
+  filter(!(heuristic %in% c("lower", "thres_lower", "thres_upper"))) %>%
+  ggplot(aes(x = factor(N), y = n_selected, fill = heuristic)) +
   geom_violin(alpha = 0.5, trim = FALSE) +
-  stat_summary(fun = mean, geom = "point", shape = 21, size = 2, color = "black", position = position_dodge(width = 0.75)) +
+  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
   facet_grid(TE ~ corr) +
   labs(title = "Counts of selected predictors Across Conditions", 
        x = "N", 
        y = "Count") +
   theme_minimal()
 
-
 combined_rates %>%
-  filter(!(r %in% nonconver_reps$r), !(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_lower"))) %>%
+  filter(!(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_lower", "selected_pred_ppvs_thres_upper"))) %>%
   ggplot(aes(x = factor(N), y = true_inclusion_rate, fill = heuristic, col = heuristic)) +
   geom_violin(alpha = 0.5, trim = FALSE) +
   stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
@@ -306,21 +236,107 @@ combined_rates %>%
        x = "N",
        y = "True Inclusion Rate") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+combined_rates %>%
+  filter(!(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_lower", "selected_pred_ppvs_thres_upper"))) %>%
+  ggplot(aes(x = factor(N), y = false_inclusion_rate, fill = heuristic, col = heuristic)) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_grid(TE ~ corr) +
+  theme_minimal() +
+  labs(title = "False Inclusion Rate cross conditions",
+       x = "N",
+       y = "False Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
 ```
 
-In the broader analysis (without filtering out replications where the lower heuristic failed), we focus on a reduced set of heuristics due to redundancy. The thres_lower and thres_upper heuristics usually result in the same submodel sizes; hence, only thres_upper is retained in this analysis. We therefore compare three methods: PPVS-default (upper SE bound), PPVS-thres_upper, and SSVS.
+true inclusion rates: When the correlation is low at 0.2, SSVS shows higher average true inclusion rates than PPVS, and the differences are larger when the sample size is small at 50. When the correlation is high at 0.8, SSVS no long shows a clear advantage over PPVS regarding mean true inclusion rate, and especially when the sample size is larger (the mean true inclusion rates are then a little bit higher for PPVS). This is as expected since having smaller sample size complicates the situation, so when the sample size is larger, SSVS is either not having a clear advantage or giving slightly worse mean inclusion rates. As for the true effects pattern aspect, for SSVS, it generally performs better when the true effects are mixed except for the condition where the sample size is small and correlation is high. For PPVS, it performs better with clustered true effects patterns when the sample size is smaller, and worse with clustered true effects but sample size is larger. The distributions of SSVS inclusion rates are also typically narrower and more stable, suggesting better consistency across replications. In summary, while PPVS performs similarly in some scenarios, SSVS generally achieves higher and more stable true inclusion rates, especially when the correlation is low.
 
-Across conditions, PPVS-default and thres_upper yield similar average inclusion rates, though distribution spread may differ slightly. SSVS often shows higher average inclusion rates, particularly under low correlation (0.2). The distributions of SSVS inclusion rates are also typically narrower and more stable, suggesting better consistency across replications.
+Moving to the false inclusion rates, the patterns are similar to that of the true inclusion rates. Both methods give similar false inclusion rates across conditions, with the exception when the correlation is high and true effects are mixed, that PPVS is clearly having on average higher false inclusion rates. Another noticeable pattern is that when the correlation is low and sample size is small, PPVS has lower mean false inclusion rates than SSVS.
 
-(Zooming in those conditions, when correlation is 0.2, sample size is 75 and true effects are clustered, the mean inclusion rate from SSVS is 36%, while the average true inclusion rates from PPVS are both at around 32%. When correlation is 0.2, sample size is 75 and true effects are mixed, all three methods show better performance on average, with SSVS at 41% and PPVS at around 34%. When correlation is 0.2, but sample size is 50, not surprisingly, all three methods are doing worse and the decreases in true inclusion rates for PPVS heuristics are larger than that from SSVS. Specifically, when true effects are clustered, SSVS has a mean inclusion rate at 26%, while PPVS heuristics have mean inclusion rates at around 17%. Then when true effects are mixed, the mean inclusion rate from SSVS increased to 28%, while the means inclusion rates from PPVS dropped to 14% and 12% for default and thres_upper respectively.
+Looking at the distributions of submodel sizes, the patterns we see from the rates can be partially explained. PPVS selects less predictors than SSVS when the correlation is low. When the correlation is high, PPVS selects similar or larger submodel sizes, especially in the condition where the true effects are mixed and the sample size is larger.
 
-Under high correlation at 0.8, all the methods perform worse. When the sample size is also small, the average inclusion rates from SSVS are still better, but the advantage is very small. When the correlation is 0.8, sample size is 50 and true effects are clustered, the average inclusion rate from SSVS is 17%, and those for PPVS are 16% and 15% for default and thres_upper respectively. When the correlation is 0.8, sample size is 50 and true effects are mixed, the mean true inclusion rate from SSVS dropped to 16%, and those for PPVS dropped to around 14%. The numbers of selected predictors from PPVS heuristics also become unstable in this condition, and the mean false inclusion rates are higher than that from SSVS. Finally, looking at the condition where correlation is 0.8, but sample size is 75, on average PPVS are having higher inclusion rates than SSVS though the advantage is small, but these are the only conditions where they excel SSVS at least on average. The distributions of counts are again a bit more scattered than that from SSVS, leading to wider spread of the distribution of true inclusion rates, and the false inclusion rates are also higher especially when the true effects are mixed.)
+```{r}
+combined_rates %>%
+  filter(heuristic == "SSVS") %>%
+  ggplot(aes(x = factor(corr), y = true_inclusion_rate, fill = TE, col = TE)) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_wrap(~ N) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions SSVS",
+       x = "corr",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-(looks quite redundant, not sure if a table would be better or which differences matter so to include less stats here)
+combined_rates %>%
+  filter(heuristic == "selected_pred_ppvs_default") %>%
+  ggplot(aes(x = factor(corr), y = true_inclusion_rate, fill = TE, col = TE)) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_wrap(~ N) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions PPVS default",
+       x = "corr",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-In summary, while PPVS performs similarly in some scenarios, SSVS generally achieves higher and more stable true inclusion rates, especially when the correlation is low.
+combined_rates %>%
+  filter(heuristic == "SSVS") %>%
+  ggplot(aes(x = factor(TE), y = true_inclusion_rate, fill = factor(corr), col = factor(corr))) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_wrap(~ N) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions SSVS",
+       x = "TE",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-(The comparison between heuristics can be tricky, because for the threshold heuristic, it only overrides the SE heuristic when the SE heuristic fails, and when both work, the smallest submodel size is returned. So even a threshold is specified, it doesn’t mean this heuristic is the one that is used to determine the size. (And all of this is based on my understanding of how suggest_size works is correct.))
+combined_rates %>%
+  filter(heuristic == "selected_pred_ppvs_default") %>%
+  ggplot(aes(x = factor(TE), y = true_inclusion_rate, fill = factor(corr), col = factor(corr))) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_wrap(~ N) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions PPVS default",
+       x = "TE",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+combined_rates %>%
+  filter(heuristic == "SSVS") %>%
+  ggplot(aes(x = factor(TE), y = true_inclusion_rate, fill = factor(N), col = factor(N))) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_wrap(~ corr) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions SSVS",
+       x = "TE",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+combined_rates %>%
+  filter(heuristic == "selected_pred_ppvs_default") %>%
+  ggplot(aes(x = factor(TE), y = true_inclusion_rate, fill = factor(N), col = factor(N))) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_wrap(~ corr) +
+  theme_minimal() +
+  labs(title = "True Inclusion Rate cross conditions PPVS default",
+       x = "TE",
+       y = "True Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+looking at how one method performs in different condition:
+For PPVS, whether the true effects are mixed or clustered doesn't matter so much. The mean true inclusion rates are higher for clustered true effects when the sample size is small regardless of correlation, and the mean true effects are higher for mixed true effects when the sample size is larger regardless of correlation, but the differences are small. While for SSVS, the mean true inclusion rates when the true effects are mixed are either higher or close to when the true effects are clustered, and this is especially apparent when the sample size is larger.
+
+For PPVS, the correlation is high or low also doesn't matter so much when the sample size is small, and when the sample size is larger, having high correlation decreases the true inclusion rates, especially when the true effects are clustered, but the differences are not big compared to SSVS. For SSVS, having high correlation really decreases the true inclusion rates and especially when the sample size is larger.
+
+For sample sizes, both methods show substantial drops in true inclusion rates when the sample size is smaller, which makes sense as we go from "p = n" to "p > n".
 
 ## rates by effect size
 ```{r}
@@ -331,7 +347,7 @@ combined_rates_by_effect_size %>%
   stat_summary(fun = mean, geom = "crossbar", width = 0.8, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
   facet_grid(corr + N ~ effect_size) +
   theme_minimal() +
-  labs(title = "Inclusion Rate cross conditions",
+  labs(title = "Inclusion Rate by effect size across conditions",
        x = "TE",
        y = "Inclusion Rate") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
@@ -361,41 +377,327 @@ combined_rates_by_effect_size %>%
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 combined_rates_by_effect_size %>%
+  filter(!(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_lower", "selected_pred_ppvs_thres_upper")), effect_size != "small", corr != 0.8) %>%
+  ggplot(aes(x = factor(TE), y = inclusion_rate, fill = heuristic, col = heuristic)) + 
+  geom_boxplot(alpha = 0.7) +
+  stat_summary(fun = mean, geom = "crossbar", width = 0.8, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_grid(corr + N ~ effect_size) +
+  theme_minimal() +
+  labs(title = "Inclusion Rate by effect size across conditions",
+       x = "TE",
+       y = "Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+combined_rates_by_effect_size %>%
+  filter(!(heuristic %in% c("selected_pred_ppvs_lower", "selected_pred_ppvs_thres_lower", "selected_pred_ppvs_thres_upper")), effect_size != "small", corr != 0.2) %>%
+  ggplot(aes(x = factor(TE), y = inclusion_rate, fill = heuristic, col = heuristic)) + 
+  geom_boxplot(alpha = 0.7) +
+  stat_summary(fun = mean, geom = "crossbar", width = 0.8, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_grid(corr + N ~ effect_size) +
+  theme_minimal() +
+  labs(title = "Inclusion Rate by effect size across conditions",
+       x = "TE",
+       y = "Inclusion Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+To investigate whether different methods tend to select predictors with different effect sizes, we stratify inclusion rates by effect size group (large, medium, small, null). 
+
+When the effect size is large, both SSVS and PPVS show relatively strong performance. SSVS gives higher or similar true mean inclusion rates as PPVS, and the advantage is clear when the correlation is low and true effects are mixed.
+
+
+When the effect size is medium, SSVS generally outperforms PPVS in conditions with low correlation. When the correlation is high, PPVS outperforms or gives similar performance to SSVS though the differences are small, except for when the smaple siz is larger and true effects are clustered. This suggests that under certain conditions, PPVS can be competitive or even superior for detecting predictors with medium effect sizes, particularly in clustered effect structures. Interestingly, under those conditions of high correlation, mean inclusion rates tend to be higher when the true effects are clustered, rather than mixed.
+
+When the effect size is medium, inclusion rates are generally low across all methods, with average rates never exceeding 20% (fewer than one correct selection on average out of five predictors). SSVS tends to slightly outperform PPVS, though differences are negligible. Again the exception stems when the correlation is high and smapler size is larger, that PPVS slightly outperform SSVS, though differences are negligible.
+
+```{r}
+# filtering the replications where the lower threshold worked
+combined_rates %>%
+  # filter for reps where 'lower' heuristic worked
+  semi_join(
+    combined_rates %>%
+      filter(heuristic == "selected_pred_ppvs_lower", !is.na(true_inclusion_rate)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+
+  filter(!(heuristic %in% c("selected_pred_ppvs_thres_upper", "selected_pred_ppvs_thres_lower"))) %>%
+  ggplot(aes(x = factor(N), y = true_inclusion_rate, fill = heuristic, col = heuristic)) +
+  geom_boxplot(alpha = 0.7) +  
+  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_grid(TE ~ corr) +  
+  labs(title = "True inclusion rate Across Conditions (subset)", 
+       x = "N", 
+       y = "true inclusion rate") +
+  theme_minimal()
+
+summary_na[summary_na$heuristic == "selected_pred_ppvs_lower", ]
+
+# filtering the replications where the lower threshold worked
+combined_counts %>%
+  # filter for reps where 'lower' heuristic worked
+  semi_join(
+    combined_counts %>%
+      filter(heuristic == "lower", !is.na(n_selected)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+
+  filter(heuristic != "thres_lower") %>%
+  ggplot(aes(x = factor(N), y = n_selected, fill = heuristic)) +
+  geom_boxplot(alpha = 0.7) +  
+  facet_grid(TE ~ corr) +  
+  labs(title = "Counts of selected predictors Across Conditions", 
+       x = "N", 
+       y = "Count") +
+  theme_minimal()
+
+combined_rates %>%
+  # filter for reps where 'lower' heuristic worked
+  semi_join(
+    combined_rates %>%
+      filter(heuristic == "selected_pred_ppvs_lower", !is.na(false_inclusion_rate)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+
+  filter(heuristic != "selected_pred_ppvs_thres_lower") %>%
+  ggplot(aes(x = factor(N), y = false_inclusion_rate, fill = heuristic)) +
+  geom_boxplot(alpha = 0.7) +  
+  stat_summary(fun = mean, geom = "point", shape = 20, size = 3, color = "black", position = position_dodge(width = 0.75)) +
+  facet_grid(TE ~ corr) +  
+  labs(title = "False inclusion rate Across Conditions", 
+       x = "N", 
+       y = "false inclusion rate") +
+  theme_minimal()
+```
+
+### Subset Analysis: Replications Where the Lower Heuristic Worked
+To first investigate the behavior of the lower SE heuristic, we focus on the subset of replications in which it did not fail. It is important to note that within each condition (i.e., each combination of N, correlation, and TE), the number of such replications is limited (ranging from 10 to 43), making it difficult to draw robust conclusions.
+
+Still, some patterns emerge. On average, the lower heuristic consistently yields higher true inclusion rates than other PPVS heuristics across all conditions. It also generally outperforms SSVS in terms of average inclusion rates, except in the condition with N = 50, correlation = 0.2, and TE = mixed.
+
+This higher inclusion rate appears to stem from the larger number of predictors selected by the lower heuristic—an expected consequence of its conservative nature, as noted earlier. Although higher inclusion rates can be beneficial, they may come at the cost of higher false inclusion rates.
+
+```{r}
+combined_rates_by_effect_size %>%
+  semi_join(combined_rates_by_effect_size %>%
+              filter(heuristic == "selected_pred_ppvs_lower", !is.na(true_inclusion_rate)) %>%
+              select(N, corr, TE, r),
+            by = c("N", "corr", "TE", "r")
+  ) %>%
+  
   filter(!(heuristic %in% c("selected_pred_ppvs_thres_upper", "selected_pred_ppvs_thres_lower")), effect_size != "null") %>%
   ggplot(aes(x = factor(TE), y = inclusion_rate, fill = heuristic, col = heuristic)) + 
   geom_boxplot(alpha = 0.7) +
   stat_summary(fun = mean, geom = "crossbar", width = 0.8, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
   facet_grid(corr + N ~ effect_size) +
   theme_minimal() +
-  labs(title = "Inclusion Rate cross conditions",
+  labs(title = "Inclusion Rate cross conditions (subset)",
        x = "TE",
        y = "Inclusion Rate") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-To investigate whether different methods tend to select predictors with different effect sizes, we stratify inclusion rates by effect size group (large, medium, small, null). Since PPVS-default and thres_upper show similar performance, only PPVS-default is used in this comparison.
-
-### large effect size
-When the effect size is large, both SSVS and PPVS show relatively strong performance. In conditions with low correlation and a larger sample size, both methods achieve high inclusion rates around 75%, with SSVS performing slightly better, especially under mixed effect structures, where the mean inclusion rate can approach 90%.
-
-However, when the sample size is smaller, there is a substantial drop in performance for both methods. Under these conditions, the inclusion rate for PPVS decreases to around 37.5%, while SSVS maintains higher mean inclusion rates, ranging from 50% to 62.5%, depending on the true effect structure.
-
-In settings with high correlation, the inclusion rates for both methods are generally similar. When the sample size is small, the mean inclusion rates tend to be around 25%, regardless of method. With a larger sample size and mixed effect structure, both methods show improved performance again, with mean inclusion rates reaching approximately 62.5%.
+When looking at inclusion rates stratified by effect size, it consistently shows higher or similar inclusion rates for large effect sizes. For medium effects, it outperforms other methods except under low correlation and small sample size. For small effects, it no longer shows substantial advantages.
 
 
-### medium effect size
-SSVS generally outperforms PPVS in conditions with low correlation and small sample size. In these scenarios, the mean inclusion rates for SSVS are consistently higher than those from PPVS. As the sample size increases, the performance gap between the two methods narrows, with both methods showing more comparable inclusion rates.
+# predictive performance
+## pmse
 
-Interestingly, under conditions of high correlation, inclusion rates tend to be higher when the true effects are clustered, rather than mixed. In these settings, PPVS occasionally outperforms SSVS, especially when the sample size is larger. This suggests that under certain conditions, PPVS can be competitive or even superior for detecting predictors with medium effect sizes, particularly in clustered effect structures.
+### main analyses
+```{r}
+# Compute means
+mean_pmse <- combined_pmse %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper", "thres_lower"))) %>%
+  group_by(N, corr, TE, heuristic) %>%
+  summarise(mean_pmse = mean(pmse, na.rm = TRUE), .groups = "drop")
 
+combined_pmse %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_lower", "thres_upper"))) %>%
+  ggplot(aes(x = pmse, fill = heuristic, color = heuristic)) +
+  geom_density(alpha = 0.3) +  
+  geom_vline(data = mean_pmse,
+             aes(xintercept = mean_pmse, color = heuristic),
+             linetype = "dashed", size = 0.8) +
+  facet_grid(corr ~ TE + N) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "PMSE", 
+       y = "Density") +
+  theme_minimal()
 
-### small effect size
-Inclusion rates are generally low across all methods, with average rates never exceeding 20% (fewer than one correct selection on average out of five predictors). SSVS tends to slightly outperform PPVS, though differences are negligible.
+# median_pmse <- combined_pmse %>%
+#   filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper", "thres_lower"))) %>%
+#   group_by(N, corr, TE, heuristic) %>%
+#   summarise(median_pmse = median(pmse, na.rm = TRUE), .groups = "drop")
+# 
+# combined_pmse %>%
+#   filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_lower", "thres_upper"))) %>%
+#   ggplot(aes(x = pmse, fill = heuristic, color = heuristic)) +
+#   geom_density(alpha = 0.3) +  
+#   geom_vline(data = median_pmse,
+#              aes(xintercept = median_pmse, color = heuristic),
+#              linetype = "dashed", size = 0.8) +
+#   facet_grid(corr ~ TE + N) +  
+#   labs(title = "PMSE Density Across Conditions", 
+#        x = "PMSE", 
+#        y = "Density") +
+#   theme_minimal()
 
-When PPVS-lower heuristic is included (without filtering for working replications), it consistently shows higher or similar inclusion rates for large effect sizes. For medium effects, it outperforms other methods except under low correlation and small sample size. For small effects, it no longer shows substantial advantages.
+combined_pmse %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper", "thres_lower"))) %>%
+  ggplot(aes(x = factor(N), y = pmse, fill = heuristic, col = heuristic)) +
+  geom_boxplot(alpha = 0.7) +
+  stat_summary(fun = mean, geom = "crossbar", width = 0.8, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_grid(TE ~ corr) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "N", 
+       y = "Density") +
+  theme_minimal()
+```
 
+For the pmse, the general pattern is that, when the correlation is lower, SSVS shows smaller mean pmse regardless of different sample sizes and true effect patterns. On the contrary, PPVS shows smaller mean pmse regardless of different sample sizes and true effect patterns when the correlation is higher. Looking at it more specifically, when the correlation is low, and true effects are clustered, the advantage of SSVS is small for both sample size 50 and 75. The spread of the distributions are smaller than those when the true effects are mixed, especially when the sample size is larger the distributions of pmse for SSVS have a much higher peak. When the correlation is low and true effects are mixed, SSVS demonstrates a bigger advantage in terms of mean pmse for both sample sizes 50 and 75, and again a higher peak at the smaller values though the distributions are more spread out for both methods especially when the sample size is smaller.
 
+When the correlation is high, PPVS gives lower mean pmse values generally. The most complicated scenario has to be when the true effects are mixed and the sample size is small and both methods have more spreaded out distributions with PPVS showing a very small advantage in mean pmse. The advantage in mean pmse values is also not that big when true effects are clustered for both sample size 50 and 75, but looking at the distributions it can be seen that the PPVS pmse distributions are more peaked at the smaller values. When the true effects are mixed and the sample size is larger, PPVS has the biggest advantage over SSVS compared to other conditions when the correlation is high, and its pmse distribution is more concentrated at the smaller values also.
 
+```{r}
+combined_pmse %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper", "thres_lower"))) %>%
+  ggplot(aes(x = factor(N), y = pmse, fill = TE, col = TE)) +
+  geom_boxplot(alpha = 0.7) +
+  stat_summary(fun = mean, geom = "crossbar", width = 0.8, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_grid(corr ~ heuristic) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "N", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper", "thres_lower"))) %>%
+  ggplot(aes(x = factor(N), y = pmse, fill = factor(corr), col = factor(corr))) +
+  geom_boxplot(alpha = 0.7) +
+  stat_summary(fun = mean, geom = "crossbar", width = 0.8, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_grid(TE ~ heuristic) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "N", 
+       y = "Density") +
+  theme_minimal()
+
+combined_pmse %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper", "thres_lower"))) %>%
+  ggplot(aes(x = factor(corr), y = pmse, fill = factor(N), col = factor(N))) +
+  geom_boxplot(alpha = 0.7) +
+  stat_summary(fun = mean, geom = "crossbar", width = 0.8, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_grid(TE ~ heuristic) +  
+  labs(title = "PMSE Density Across Conditions", 
+       x = "corr", 
+       y = "Density") +
+  theme_minimal()
+```
+
+Another general pattern is that for the rates, PPVS and SSVS show different patterns when the true effects are mixed or clustered(the true inclusion rate can be higher for TE mixed for SSVS, but doesn't matter so much for PPVS), but for pmse, both methods have more spread out distributions when the true effects are mixed than when the true effects are clustered, and most of the time the mean pmse values are higher when the true effects are mixed, which is especially apparent when the correlation is high.
+
+Interestingly, while having high correlation lowers the true inclusion rates, having high correlation also lowers the pmse for both methods across different conditions, with the exception for SSVS when the true effects are mixed.
+
+Again having smaller sample size worsens the performance of both methods regarding pmse.
+
+### subset analysis
+```{r}
+# filtering the replications where the lower threshold worked
+combined_pmse %>%
+  # filter for reps where 'lower' heuristic worked
+  semi_join(
+    combined_pmse %>%
+      filter(heuristic == "lower", !is.na(pmse)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+
+  filter(!(heuristic %in% c("thres_lower", "thres_upper"))) %>%
+  ggplot(aes(x = factor(N), y = pmse, fill = heuristic, col = heuristic)) +
+  geom_boxplot(alpha = 0.7) +  
+  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_grid(TE ~ corr) +  
+  labs(title = "PMSE Across Conditions (subset)", 
+       x = "N", 
+       y = "pmse") +
+  theme_minimal()
+```
+
+PPVS lower heuristic gives lower pmse values than PPVS upper in every condition. When the correlation is low and the true effects are clustered, PPVS lower heuristic shows the lowest pmse regardless of sample sizes. When the correlation is low and true effects are mixed, PPVS lower heuristic has slightly higher pmse values than SSVS. On the other hand, when the correlation is high, PPVS lower heuristic shows the lowest mean pmse values across all the conditions.
+## coverage 
+### main analyses
+```{r}
+combined_coverage_summary %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "SSVS", "thres_lower"))) %>%
+  ggplot(aes(x = replication_coverage, fill = heuristic, col = heuristic)) + 
+  geom_density(alpha = 0.3) +
+  facet_grid(N ~ TE + corr) +  
+  labs(title = "Density of coverage percentage for 100 replications Across Conditions", 
+       x = "Replication coverage percentage", 
+       y = "Density") +
+  theme_minimal()
+
+# Compute means
+mean_percen_coverage <- combined_coverage_summary %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper", "thres_lower"))) %>%
+  group_by(N, corr, TE, heuristic) %>%
+  summarise(mean_percen_coverage = mean(replication_coverage, na.rm = TRUE), .groups = "drop")
+
+combined_coverage_summary %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper", "thres_lower"))) %>%
+  ggplot(aes(x = replication_coverage, fill = heuristic, col = heuristic)) + 
+  geom_density(alpha = 0.3) +
+  geom_vline(data = mean_percen_coverage,
+             aes(xintercept = mean_percen_coverage, color = heuristic),
+             linetype = "dashed", size = 0.8) +
+  facet_grid(corr ~ TE + N) +  
+  labs(title = "Density of coverage percentage for 100 replications Across Conditions", 
+       x = "Replication coverage percentage", 
+       y = "Density") +
+  theme_minimal()
+
+combined_coverage_summary %>%
+  filter(prediction_type == "pred_testScaledOnTrain", !(heuristic %in% c("lower", "thres_upper", "thres_lower"))) %>%
+  ggplot(aes(x = factor(N), y = replication_coverage, fill = heuristic, col = heuristic)) + 
+  geom_boxplot(alpha = 0.7) +
+  stat_summary(fun = mean, geom = "crossbar", width = 0.8, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_grid(TE ~ corr) +  
+  labs(title = "Coverage percentage for 100 replications Across Conditions", 
+       x = "Sample size", 
+       y = "Coverage percentage") +
+  theme_minimal()
+```
+Looking at coverage percentages across different conditions, this is where PPVS is doing better than SSVS in every condition. The mean coverage percentages are higher and the spread is close or smaller than the spread from SSVS. But generally both methods show some stability looking at this measure of performance as the distributions are generally more compact(concentrated? not so spread out?) than those for rates and pmse, indicating stability of predictive performance. The only weird conditions are when the correlation is low and the sample size is also small, that both methods have some small outliers (not sure why and how to explain this).
+
+### subset analysis
+```{r}
+# filtering the replications where the lower threshold worked
+combined_coverage_summary %>%
+  # filter for reps where 'lower' heuristic worked
+  semi_join(
+    combined_coverage_summary %>%
+      filter(heuristic == "lower", !is.na(replication_coverage)) %>%
+      select(N, corr, TE, r),
+    by = c("N", "corr", "TE", "r")
+  ) %>%
+
+  filter(!(heuristic %in% c("thres_lower", "thres_upper"))) %>%
+  ggplot(aes(x = factor(N), y = replication_coverage, fill = heuristic, col = heuristic)) +
+  geom_boxplot(alpha = 0.7) +  
+  stat_summary(fun = mean, geom = "crossbar", width = 1, color = "black", fatten = 0.9, position = position_dodge(width = 0.75)) +
+  facet_grid(TE ~ corr) +  
+  labs(title = "Replication Coverage Across Conditions (subset)", 
+       x = "N", 
+       y = "coverage percentage") +
+  theme_minimal()
+```
+
+The PPVS lower heuristic again outperforms PPVS default heuristic and SSVS almost in every condition with the exceptions that sometimes it gives really similar coverage percentage as PPVS default heuristic.
+
+So as a little bit of conclusion for the PPVS lower heuristic, it just generally selects more predictors, which leads to higher true inclusion rates and also false inclusion rates, but regarding predictive performance it seems having more predictors can really help? Not sure how to interpret...
+
+Also a note for myself, it seems that PPVS is indeed better in terms of predictive performance, and regarding true inclusion rates, it also starts to shine when the correlation is high and it is not so sensitive when the true effects pattern changes or the correlation changes compared to SSVS. Not sure what would be the next step though if we are going for more simulation settings. (but anyways I still need to run the conditions left in the Sierra paper)
 
 
 

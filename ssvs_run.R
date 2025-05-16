@@ -9,10 +9,20 @@ N <- c(50, 75)
 corr <- c(0.2, 0.8)
 TE <- c("clustered", "mixed")
 r <- 1:100
-# r <- sample(1:500, size = 100, replace = FALSE)  # Randomly sample 100 values from 1:500
-
 
 conditions <- expand.grid(N = N, corr = corr, TE = TE, r = r)
+
+# N <- 100
+# corr <- c(0, 0.4, 0.8)
+# TE <- c("clustered", "mixed")
+# r <- 1:100
+# 
+# conditions <- expand.grid(N = N, corr = corr, TE = TE, r = r)
+# conditions <- conditions %>%
+#   filter(!(corr == 0 & loc_TE == "mixed"))
+
+seed <- 123
+set.seed(seed)
 
 #### Part 2: Set up workflow function -----
 # Workflow function for SSVS
@@ -44,10 +54,9 @@ workflow_ssvs <- function(pos, conditions) {
   train_means <- colMeans(train_data[, -1])
   train_sds <- apply(train_data[, -1], 2, sd)
   # ssvs() function scales the data internally, so we don't need to scale the training data
-  # Standardize test data using its own test statistics
-  test_data[, -1] <- scale(test_data[, -1]) %>% as.data.frame() # Standardize all columns except for 'y'
+
   # Standardize test data using training statistics
-  test_data_scaledOnTrain <- data$test # Copy the original test data
+  test_data_scaledOnTrain <- test_data # Copy the original test data
   test_data_scaledOnTrain[, -1] <- scale(test_data_scaledOnTrain[, -1], center = train_means, scale = train_sds) %>% as.data.frame() # Standardize all columns except for 'y'
   
   # Define a unique name for saving the results
@@ -73,29 +82,30 @@ workflow_ssvs <- function(pos, conditions) {
   beta_draws <- ssvs_out$beta[, ssvs_df_out$selected_pred_ssvs == 1]
   intercept_draws <- ssvs_out$int
   sigma_draws <- 1 / sqrt(ssvs_out$taue)
-  X_test <- as.matrix(test_data[, ssvs_df_out$Variable[ssvs_df_out$selected_pred_ssvs == 1]])
   X_test_scaledOnTrain <- as.matrix(test_data_scaledOnTrain[, ssvs_df_out$Variable[ssvs_df_out$selected_pred_ssvs == 1]])
   
-  # Point predictions using posterior means
-  point_pred_avgBeta <- mean(intercept_draws) + 
-    X_test %*% ssvs_df_out$`Avg Beta`[ssvs_df_out$selected_pred_ssvs == 1]
+  # # Point predictions using posterior means
+  # point_pred_avgBeta <- mean(intercept_draws) + 
+  #   X_test %*% ssvs_df_out$`Avg Beta`[ssvs_df_out$selected_pred_ssvs == 1]
+  # 
+  # point_pred_avgNonZeroBeta <- mean(intercept_draws) + 
+  #   X_test %*% ssvs_df_out$`Avg Nonzero Beta`[ssvs_df_out$selected_pred_ssvs == 1]
+  # 
+  # # Point predictions using training-scaled test data
+  # point_pred_testScaledOnTrain_avgBeta <- mean(intercept_draws) + 
+  #   X_test_scaledOnTrain %*% 
+  #   ssvs_df_out$`Avg Beta`[ssvs_df_out$selected_pred_ssvs == 1]
+  # 
+  # point_pred_testScaledOnTrain_avgNonZeroBeta <- mean(intercept_draws) + 
+  #   X_test_scaledOnTrain %*% 
+  #   ssvs_df_out$`Avg Nonzero Beta`[ssvs_df_out$selected_pred_ssvs == 1]
+  # 
+  # # Linear predictor with uncertainty
+  # linpred <- colMeans(intercept_draws + beta_draws %*% t(X_test))
+  # 
+  # linpred_testScaledOnTrain <- colMeans(intercept_draws + beta_draws %*% t(X_test_scaledOnTrain))
   
-  point_pred_avgNonZeroBeta <- mean(intercept_draws) + 
-    X_test %*% ssvs_df_out$`Avg Nonzero Beta`[ssvs_df_out$selected_pred_ssvs == 1]
   
-  # Point predictions using training-scaled test data
-  point_pred_testScaledOnTrain_avgBeta <- mean(intercept_draws) + 
-    X_test_scaledOnTrain %*% 
-    ssvs_df_out$`Avg Beta`[ssvs_df_out$selected_pred_ssvs == 1]
-  
-  point_pred_testScaledOnTrain_avgNonZeroBeta <- mean(intercept_draws) + 
-    X_test_scaledOnTrain %*% 
-    ssvs_df_out$`Avg Nonzero Beta`[ssvs_df_out$selected_pred_ssvs == 1]
-  
-  # Linear predictor with uncertainty
-  linpred <- colMeans(intercept_draws + beta_draws %*% t(X_test))
-  
-  linpred_testScaledOnTrain <- colMeans(intercept_draws + beta_draws %*% t(X_test_scaledOnTrain))
   
   # ---- The predictive distribution for a new observation ----
   # Number of posterior draws
@@ -103,20 +113,11 @@ workflow_ssvs <- function(pos, conditions) {
   
   # Compute predictive distribution using matrix multiplication (broadcasting the intercept)
   set.seed(seed)
-  pred <- intercept_draws + beta_draws %*% t(X_test) + matrix(rnorm(num_draws * nrow(X_test), mean = 0, sd = sigma_draws), nrow = num_draws)
-  set.seed(seed)
   pred_testScaledOnTrain <- intercept_draws + beta_draws %*% t(X_test_scaledOnTrain) + matrix(rnorm(num_draws * nrow(X_test_scaledOnTrain), mean = 0, sd = sigma_draws), nrow = num_draws)
   
   # Save the predictions to an RData file
   ssvs_pred_results <- list(
     y = test_data$y,  # True values
-    point_pred_avgBeta = as.vector(point_pred_avgBeta),
-    point_pred_avgNonZeroBeta = as.vector(point_pred_avgNonZeroBeta),
-    point_pred_testScaledOnTrain_avgBeta = as.vector(point_pred_testScaledOnTrain_avgBeta),
-    point_pred_testScaledOnTrain_avgNonZeroBeta = as.vector(point_pred_testScaledOnTrain_avgNonZeroBeta),
-    linpred = linpred,
-    linpred_testScaledOnTrain = linpred_testScaledOnTrain,
-    pred = pred, # Full posterior predictive distribution (num_draws x nrow(X_test))
     pred_testScaledOnTrain = pred_testScaledOnTrain # Full posterior predictive distribution (num_draws x nrow(X_test_scaledOnTrain))
   )
   save(ssvs_pred_results, file = paste0("output_study2/ssvs/ssvs_pred_results/ssvs_pred_results_", name, ".RData"))
@@ -139,7 +140,6 @@ cl <- makeCluster(nworkers, type = "PSOCK")
 clusterEvalQ(cl, {
   library(tidyverse)
   library(SSVS)
-  library(data.table)
   source("workflow_functions.R")
 })
 

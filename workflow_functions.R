@@ -1,8 +1,14 @@
-
-# load, filter and standardize data
+# read data function
 load_and_prepare_data <- function(sample_size, replication, corr, TE) {
-  
+
   # Construct the file name based on the given conditions
+  
+  # study 1
+  # data_dir <- "p50/" 
+  # train_file <- paste0(data_dir, "train_n", sample_size, "_p50_corr", corr, "_TE", TE, ".RData")
+  # test_file  <- paste0(data_dir, "test_fortrain_n", sample_size, "_p50_corr", corr, "_TE", TE, ".RData")
+  
+  # study 2
   data_dir <- "simdata/"
   train_file <- paste0(data_dir, "train_n", sample_size, "_p75_corr", corr, "_TE", TE, ".RData")
   test_file  <- paste0(data_dir, "test_fortrain_n", sample_size, "_p75_corr", corr, "_TE", TE, ".RData")
@@ -13,23 +19,23 @@ load_and_prepare_data <- function(sample_size, replication, corr, TE) {
   } else {
     stop(paste("Training data file not found:", train_file))
   }
-  
+
   # Load the correct test dataset
   if (file.exists(test_file)) {
     load(test_file)  # This loads `df_test`
   } else {
     stop(paste("Test data file not found:", test_file))
   }
-  
+
   # Extract the correct replication
   if (replication > length(df_train) || replication > length(df_test)) {
     stop("Replication index exceeds available replications.")
   }
-  
+
   # Select the appropriate replication
   train_data <- df_train[[replication]]
   test_data <- df_test[[replication]]
-  
+
   return(list(train = train_data, test = test_data))
 }
 
@@ -44,7 +50,7 @@ fit_reference_model <- function(data, seed = 123) {
     prior = prior(horseshoe(), class = "b"),
     chains = 4,
     iter = 2000,
-#    backend = "cmdstanr",
+    backend = "cmdstanr",
     seed = seed
   )
   return(refm_fit)
