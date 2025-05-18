@@ -1,0 +1,520 @@
+---
+title: "empirical_examples"
+author: "Kim"
+format: html
+---
+```{r}
+# load libraries
+library(data.table)
+library(tidyverse)
+library(ggplot2)
+library(brms)
+library(projpred)
+library(posterior)
+library(bayesplot)
+library(SSVS)
+library(patchwork)
+```
+
+
+# bodyfat
+```{r}
+# load the data
+url <- "http://jse.amstat.org/datasets/fat.dat.txt"  
+bodyfat <- fread(url, col.names = c("case", "brozek", "siri", 
+                                    "density", "age", 
+                                    "weight_lbs", 
+                                    "height_in", "bmi", 
+                                    "fat_free_weight", "neck", 
+                                    "chest", "abdomen", 
+                                    "hip", "thigh", 
+                                    "knee", "ankle", 
+                                    "biceps", "forearm",
+                                    "wrist"))
+```
+
+```{r}
+glimpse(bodyfat)
+head(bodyfat)
+```
+
+```{r}
+# remove the columns that are not going to be used and the rows that are possible errors
+bodyfat <- bodyfat %>%
+  select(!c("brozek", "density", "fat_free_weight", "bmi")) %>%
+  filter(!(case %in% c(39, 42, 48, 76, 96, 182))) %>%
+  select(!case) %>%
+  as.data.frame()
+head(bodyfat)
+```
+
+
+```{r}
+# preprocessing
+
+# scale the data
+bodyfat_n <- nrow(bodyfat)
+bodyfat_half_n <- floor(bodyfat_n / 2)
+
+# Split into training and test sets
+bodyfat_train <- bodyfat[1:bodyfat_half_n, ]
+bodyfat_test <- bodyfat[(bodyfat_half_n + 1):bodyfat_n, ]
+
+# save the train X statistics
+train_means <- apply(bodyfat_train[, -1], 2, mean)
+train_sds <- apply(bodyfat_train[, -1], 2, sd)
+
+# Standardize training data
+bodyfat_train[, -1] <- scale(bodyfat_train[, -1]) %>% as.data.frame()  # Standardize all columns except for 'y'
+# Scale test X using train X statistics
+bodyfat_test[, -1] <- scale(bodyfat_test[, -1], center = train_means, scale = train_sds) %>% as.data.frame()
+```
+
+## ppvs
+```{r cache = TRUE}
+# fit the reference model
+system.time(
+  bodyfat_refm_fit <- brm(
+    formula = siri ~ .,
+    data = bodyfat_train,
+    family = gaussian(),
+    prior = prior(horseshoe(), class = "b"),
+    chains = 4,
+    iter = 2000,
+    backend = "cmdstanr",
+    seed = 123
+  )
+  )
+```
+
+```{r}
+# check the reference model fit
+yrep <- posterior_predict(bodyfat_refm_fit, draws = 50)
+ppc_dens_overlay(bodyfat_train$siri, yrep)
+```
+
+```{r}
+summary(bodyfat_refm_fit)
+```
+
+```{r}
+# get the reference model object
+bodyfat_refm_obj <- get_refmodel(bodyfat_refm_fit)
+
+# Preliminary cv_varsel() run without refitting the reference model and without cross-validation
+cvvs_fast_bodyfat <- cv_varsel(
+  bodyfat_refm_obj,
+  validate_search = FALSE,
+  ### Only for the sake of speed (not recommended in general):
+  method = "L1",
+  refit_prj = FALSE,
+  nterms_max = 13,
+  verbose = FALSE
+)
+```
+
+```{r}
+plot(cvvs_fast_bodyfat, stats = "elpd", ranking_nterms_max = NA)
+```
+
+```{r}
+# Preliminary cv_varsel() run with `refit_prj = TRUE`:
+bodyfat_cvvs_fast_refit <- cv_varsel(
+  cvvs_fast_bodyfat,
+  nclusters_pred = 20,
+  verbose = FALSE
+)
+```
+
+```{r}
+plot(bodyfat_cvvs_fast_refit, stats = "elpd", ranking_nterms_max = NA)
+```
+
+```{r}
+# final cv_varsel() run 5-fold
+system.time(
+  cvvs_bodyfat <- cv_varsel(
+  bodyfat_refm_obj,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  # nclusters_pred = 20,
+  nterms_max = 6, # determined by manually inspect the solution path plots above
+  seed = 123,
+  verbose = FALSE
+  )
+  )
+```
+
+
+```{r}
+# the solution path plot in the empirical application section
+plot(cvvs_bodyfat, stats = "elpd", ranking_nterms_max = NA)
+```
+
+
+```{r}
+print(paste("The suggested model size based on ELPD using 5-fold-CV is", suggest_size(cvvs_bodyfat, type = "upper")))
+```
+
+
+```{r}
+summary(cvvs_bodyfat, stats = "elpd", type = c("mean", "lower", "upper"), deltas = TRUE)
+```
+
+```{r}
+# predictor ranking
+rk_bodyfat <- ranking(cvvs_bodyfat)
+rk_bodyfat[["fulldata"]]
+```
+
+```{r}
+# ranking proportions
+pr_rk_bodyfat <- cv_proportions(rk_bodyfat)
+plot(pr_rk_bodyfat)
+```
+
+```{r}
+# get the final predictors
+bodyfat_size_decided <- suggest_size(cvvs_bodyfat, type = "upper")
+bodyfat_predictors_final <- head(rk_bodyfat[["fulldata"]], bodyfat_size_decided)
+```
+
+```{r}
+# project the reference model onto the submodel
+prj_bodyfat <- project(
+  bodyfat_refm_obj,
+  predictor_terms = bodyfat_predictors_final,
+  verbose = FALSE
+)
+```
+
+```{r}
+# Predictions
+# The predictive distribution for new observations (similar to posterior_predict)
+prj_pred_bodyfat <- proj_predict(prj_bodyfat, newdata = bodyfat_test[, -1], .seed = 123)
+```
+
+```{r}
+# pmse
+pmse_bodyfat_ppvs <- mean((bodyfat_test$siri - colMeans(prj_pred_bodyfat))^2)
+pmse_bodyfat_ppvs
+```
+
+```{r}
+# projection predictive check
+ppc_dens_overlay(bodyfat_test$siri, prj_pred_bodyfat[sample(1:400, size = 50), ])
+```
+
+
+## ssvs
+```{r}
+# Run SSVS
+set.seed(123)  # Ensure reproducibility
+ssvs_out_bodyfat <- ssvs(data = bodyfat_train, 
+                         x = c("age", "weight_lbs", "height_in", "neck", "chest", "abdomen", "hip", "thigh", "knee", "ankle", "biceps", "forearm", "wrist" ), 
+                         y = "siri", 
+                         progress = FALSE)
+```
+
+
+```{r}
+# Get summary and convert to dataframe
+ssvs_summary_bodyfat <- summary(ssvs_out_bodyfat, interval = 0.95) %>% as.data.frame()
+# Add the column `selected_pred`
+ssvs_summary_bodyfat$selected_pred <- ifelse(ssvs_summary_bodyfat$MIP > 0.5, 1, 0)
+ssvs_summary_bodyfat
+```
+
+
+```{r}
+# Extract necessary matrices
+beta_draws_bodyfat <- ssvs_out_bodyfat$beta[, ssvs_summary_bodyfat$selected_pred == 1]
+intercept_draws_bodyfat <- ssvs_out_bodyfat$int
+sigma_draws_bodayfat <- 1 / sqrt(ssvs_out_bodyfat$taue)
+X_test_bodyfat <- as.matrix(bodyfat_test[, ssvs_summary_bodyfat$Variable[ssvs_summary_bodyfat$selected_pred == 1]])
+
+# The predictive distribution for a new observation
+# Number of posterior draws
+num_draws_bodyfat <- nrow(ssvs_out_bodyfat$beta)  
+  
+# Compute predictive distribution using matrix multiplication (broadcasting the intercept)
+set.seed(123)
+pred_bodyfat <- intercept_draws_bodyfat + beta_draws_bodyfat %*% t(X_test_bodyfat) + 
+  matrix(rnorm(num_draws_bodyfat * nrow(X_test_bodyfat), mean = 0, sd = sigma_draws_bodayfat), nrow = num_draws_bodyfat)
+```
+
+
+```{r}
+# pmse
+pmse_bodyfat_ssvs <- mean((bodyfat_test$siri - colMeans(pred_bodyfat))^2)
+pmse_bodyfat_ssvs
+```
+
+```{r}
+# posterior predictive check after selection
+ppc_dens_overlay(bodyfat_test$siri, pred_bodyfat[sample(1:15001, size = 50), ])
+```
+
+
+```{r}
+# posterior (/projection) predictive check after selection
+# Create each plot individually
+set.seed(123)
+ppvs_plot_bodyfat <- ppc_dens_overlay(bodyfat_test$siri, prj_pred_bodyfat[sample(1:400, 50), ]) +
+  ggtitle("PPVS") +
+  theme(legend.position = "none")
+
+set.seed(123)
+ssvs_plot_bodyfat <- ppc_dens_overlay(bodyfat_test$siri, pred_bodyfat[sample(1:15001, 50), ]) +
+  ggtitle("SSVS") +
+  theme(legend.position = "none")
+
+# Combine them side-by-side
+ppvs_plot_bodyfat + ssvs_plot_bodyfat
+```
+
+# prostate
+```{r}
+library(genridge)
+data(prostate)
+# removing the column for train test split
+prostate <- prostate[, -10]
+
+glimpse(prostate)
+head(prostate)
+```
+
+```{r}
+# scale the data
+prostate_n <- nrow(prostate)
+prostate_half_n <- floor(prostate_n / 2)
+
+# Split into training and test sets
+prostate_train <- prostate[1:prostate_half_n, ]
+prostate_test <- prostate[(prostate_half_n + 1):prostate_n, ]
+
+# save the train X statistics
+train_means_prostate <- apply(prostate_train[, -9], 2, mean)
+train_sds_prostate <- apply(prostate_train[, -9], 2, sd)
+
+# Standardize training data
+prostate_train[, -9] <- scale(prostate_train[, -9]) %>% as.data.frame()  # Standardize all columns except for 'y'
+# Scale test X using train X statistics
+prostate_test[, -9] <- scale(prostate_test[, -9], center = train_means_prostate, scale = train_sds_prostate) %>% as.data.frame()
+```
+
+## ppvs
+```{r cache = TRUE}
+# fit the reference model
+system.time(
+  prostate_refm_fit <- brm(
+    formula = lpsa ~ .,
+    data = prostate_train,
+    family = gaussian(),
+    prior = prior(horseshoe(), class = "b"),
+    chains = 4,
+    iter = 2000,
+    backend = "cmdstanr",
+    seed = 123
+  )
+  )
+```
+
+```{r}
+# reference model predictive check
+yrep_prostate <- posterior_predict(prostate_refm_fit, draws = 50)
+ppc_dens_overlay(prostate_train$lpsa, yrep_prostate)
+```
+
+```{r}
+summary(prostate_refm_fit)
+```
+
+```{r}
+# get the reference model object
+prostate_refm_obj <- get_refmodel(prostate_refm_fit)
+
+# Preliminary cv_varsel() run without refitting the reference model and without cross-validation
+cvvs_fast_prostate <- cv_varsel(
+  prostate_refm_obj,
+  validate_search = FALSE,
+  ### Only for the sake of speed (not recommended in general):
+  method = "L1",
+  refit_prj = FALSE,
+  nterms_max = 8,
+  verbose = FALSE
+)
+```
+
+```{r}
+plot(cvvs_fast_prostate, stats = "elpd", ranking_nterms_max = NA)
+```
+
+```{r}
+# Preliminary cv_varsel() run with `refit_prj = TRUE`:
+prostate_cvvs_fast_refit <- cv_varsel(
+  cvvs_fast_prostate,
+  nclusters_pred = 20,
+  verbose = FALSE
+)
+```
+
+```{r}
+plot(prostate_cvvs_fast_refit, stats = "elpd", ranking_nterms_max = NA)
+```
+
+```{r}
+# final cv_varsel() run 5-fold
+system.time(
+  cvvs_prostate <- cv_varsel(
+  prostate_refm_obj,
+  cv_method = "kfold",
+  K = 5,
+  method = "forward",
+  nclusters = 20,
+  ndraws_pred = 400, 
+  nterms_max = 6, # determined by manually inspect the plot above
+  seed = 123,
+  verbose = FALSE
+  )
+  )
+```
+
+```{r}
+# solution path
+plot(cvvs_prostate, stats = "elpd", ranking_nterms_max = NA)
+```
+
+
+```{r}
+print(paste("The suggested model size based on ELPD using 5-fold-CV is", suggest_size(cvvs_prostate, type = "upper")))
+```
+
+
+```{r}
+summary(cvvs_prostate, stats = "elpd", type = c("mean", "lower", "upper"), deltas = TRUE)
+```
+
+```{r}
+# predictor ranking
+rk_prostate <- ranking(cvvs_prostate)
+rk_prostate[["fulldata"]]
+```
+
+
+
+```{r}
+# ranking proportions
+pr_rk_prostate <- cv_proportions(rk_prostate)
+plot(pr_rk_prostate)
+```
+
+```{r}
+# get the final predictors
+prostate_size_decided <- suggest_size(cvvs_prostate, type = "upper")
+prostate_predictors_final <- head(rk_prostate[["fulldata"]], prostate_size_decided)
+```
+
+
+```{r}
+# project the reference model onto the submodel
+prj_prostate <- project(
+  prostate_refm_obj,
+  predictor_terms = prostate_predictors_final,
+  verbose = FALSE
+)
+```
+
+```{r}
+# Predictions
+# The predictive distribution for new observations (similar to posterior_predict)
+prj_pred_prostate <- proj_predict(prj_prostate, newdata = prostate_test[, -9], .seed = 123)
+```
+
+```{r}
+# pmse
+pmse_prostate_ppvs <- mean((prostate_test$lpsa - colMeans(prj_pred_prostate))^2)
+pmse_prostate_ppvs
+```
+
+```{r}
+# projection predictive check
+ppc_dens_overlay(prostate_test$lpsa, prj_pred_prostate[sample(1:400, size = 50), ])
+```
+
+## ssvs
+```{r}
+# Run SSVS
+set.seed(123)  # Ensure reproducibility
+ssvs_out_prostate <- ssvs(data = prostate_train, 
+                         x = c("lcavol", "lweight", "age", "lbph", "svi", "lcp", "gleason", "pgg45"), 
+                         y = "lpsa", 
+                         progress = FALSE)
+```
+
+```{r}
+# Get summary and convert to dataframe
+ssvs_summary_prostate <- summary(ssvs_out_prostate, interval = 0.95) %>% as.data.frame()
+# Add the column `selected_pred`
+ssvs_summary_prostate$selected_pred <- ifelse(ssvs_summary_prostate$MIP > 0.5, 1, 0)
+ssvs_summary_prostate
+```
+
+
+```{r}
+# Extract necessary matrices
+beta_draws_prostate <- ssvs_out_prostate$beta[, ssvs_summary_prostate$selected_pred == 1]
+intercept_draws_prostate <- ssvs_out_prostate$int
+sigma_draws_prostate <- 1 / sqrt(ssvs_out_prostate$taue)
+X_test_prostate <- as.matrix(prostate_test[, ssvs_summary_prostate$Variable[ssvs_summary_prostate$selected_pred == 1]])
+
+# The predictive distribution for a new observation
+# Number of posterior draws
+num_draws_prostate <- nrow(ssvs_out_prostate$beta)  
+  
+# Compute predictive distribution using matrix multiplication (broadcasting the intercept)
+set.seed(123)
+pred_prostate <- intercept_draws_prostate + beta_draws_prostate %*% t(X_test_prostate) + 
+  matrix(rnorm(num_draws_prostate * nrow(X_test_prostate), mean = 0, sd = sigma_draws_prostate), nrow = num_draws_prostate)
+```
+
+```{r}
+# pmse
+pmse_prostate_ssvs <- mean((prostate_test$lpsa - colMeans(pred_prostate))^2)
+pmse_prostate_ssvs
+```
+
+```{r}
+# posterior predictive check after selection
+ppc_dens_overlay(prostate_test$lpsa, pred_prostate[sample(1:15001, size = 50), ])
+```
+
+
+```{r}
+# Create each plot individually
+set.seed(123)
+ppvs_plot_prostate <- ppc_dens_overlay(prostate_test$lpsa, prj_pred_prostate[sample(1:400, 50), ]) +
+  ggtitle("PPVS") +
+  theme(legend.position = "none")
+
+set.seed(123)
+ssvs_plot_prostate <- ppc_dens_overlay(prostate_test$lpsa, pred_prostate[sample(1:15001, 50), ]) +
+  ggtitle("SSVS")
+
+# Combine all four of them side-by-side
+p_empirical <- (
+  ppvs_plot_bodyfat + ppvs_plot_prostate + 
+  ssvs_plot_bodyfat + ssvs_plot_prostate
+) +
+  plot_annotation(
+    tag_levels = 'a',
+    tag_prefix = "(", 
+    tag_suffix = ")"
+  )
+
+# save plot
+ggsave("empirical.png", plot = p_empirical, width = 10, height = 6, dpi = 300)
+```
