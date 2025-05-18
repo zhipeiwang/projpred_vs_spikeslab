@@ -8,5 +8,5 @@ output/output_study1/ppvs/summ_ref
 output/output_study2/ppvs/cvvs4suggest_size_failed
 output/output_study2/ppvs/ppvs_out
 output/output_study2/ppvs/summ_ref
-output/output_study1/ssvs
-output/output_study2/ssvs
+output/output_study1/ssvs/ssvs_pred_results
+output/output_study2/ssvs/ssvs_pred_results
