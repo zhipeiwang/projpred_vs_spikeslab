@@ -2,8 +2,6 @@
 .Rhistory
 .RData
 .Ruserdata
-/p50
-/output
-/simdata
-/output_study2
-/output_study1
+/data
+/output/output_study1
+/output/output_study2
