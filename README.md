@@ -7,7 +7,7 @@ We compare the performance of two Bayesian variable selection methods—Stochast
 
 ---
 # Directory Structure
-
+```
 ├── data
 │   ├── p50
 │   └── simdata
@@ -53,7 +53,7 @@ We compare the performance of two Bayesian variable selection methods—Stochast
     ├── study2Analysis.qmd
     ├── workflow_functions.R
     └── workflow_run.R
-
+```
 ---
 
 ---
@@ -81,9 +81,9 @@ These files contain aggregated results after post-processing and can be used to 
 
 ⚠️ Note on computational cost
 
-Running the full simulations, especially the PPVS method, can be extremely resource-intensive. Although personal laptops may have many CPU cores, PPVS is highly memory-demanding, which limits how many cores can be used effectively, and may cause RStudio to crash. As a result, the full pipeline can take more than two weeks to complete on a typical personal machine.
+> Running the full simulations, especially the PPVS method, can be extremely resource-intensive. Although personal laptops may have many CPU cores, PPVS is highly memory-demanding, which limits how many cores can be used effectively, and may cause RStudio to crash. As a result, the full pipeline can take more than two weeks to complete on a typical personal machine.
 
-Additionally, the resulting .RData files for each condition and replication can be very large. This is one reason why the raw simulation output is not included in this repository—only post-processed summaries are provided.
+> Additionally, the resulting .RData files for each condition and replication can be very large. This is one reason why the raw simulation output is not included in this repository—only post-processed summaries are provided.
 ---
 
 ### Figures & Analysis
