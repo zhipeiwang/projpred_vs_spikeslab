@@ -3,7 +3,7 @@
 This repository contains all relevant code and information to reproduce the results in the master's thesis:  
 _Comparing Bayesian Post-estimation Variable Selection Methods: Projection Predictive Variable Selection Versus Stochastic Search Variable Selection_.
 
-We compare the performance of two Bayesian variable selection methods—Stochastic Search Variable Selection (SSVS) and Projection Predictive Variable Selection (PPVS)—through two simulation studies: one in a low-dimensional setting and another in a high-dimensional setting. Two empirical datasets are also included to illustrate practical application. The full thesis is provided in this repository.
+We compare the performance of two Bayesian variable selection methods Projection Predictive Variable Selection (PPVS) and Stochastic Search Variable Selection (SSVS) through two simulation studies: one in a low-dimensional setting and another in a high-dimensional setting. Two empirical datasets are also included to illustrate practical application. The full thesis is provided in this repository.
 
 ---
 # Directory Structure
@@ -54,7 +54,6 @@ We compare the performance of two Bayesian variable selection methods—Stochast
     ├── workflow_functions.R
     └── workflow_run.R
 ```
----
 
 ---
 
@@ -81,9 +80,9 @@ These files contain aggregated results after post-processing and can be used to 
 
 ⚠️ Note on computational cost
 
-> Running the full simulations, especially the PPVS method, can be extremely resource-intensive. Although personal laptops may have many CPU cores, PPVS is highly memory-demanding, which limits how many cores can be used effectively, and may cause RStudio to crash. As a result, the full pipeline can take more than two weeks to complete on a typical personal machine.
+- Running the full simulations, especially the PPVS method, can be extremely resource-intensive. Although personal laptops may have many CPU cores, PPVS is highly memory-demanding, which limits how many cores can be used effectively, and may cause RStudio to crash. As a result, the full pipeline can take more than two weeks to complete on a typical personal machine.
 
-> Additionally, the resulting .RData files for each condition and replication can be very large. This is one reason why the raw simulation output is not included in this repository—only post-processed summaries are provided.
+- Additionally, the resulting .RData files for each condition and replication can be very large. This is one reason why the raw simulation output is not included in this repository—only post-processed summaries are provided.
 ---
 
 ### Figures & Analysis
@@ -111,7 +110,7 @@ Running `renv::restore()` will install the correct package versions to reproduce
 Both simulation studies and empirical datasets used in the project are approved by the Ethical Review Board of the Faculty of Social and Behavioural Sciences of Utrecht University.
 - Simulation studies: FETC 24-2042 
 - Empirical datasets: FETC 25-1375 
-    - The approval is valid through 12 May 2025.
+  - The approval is valid through 12 May 2025.
     
 # License
 This repository is licensed under the MIT License.
